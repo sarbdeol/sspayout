@@ -14,7 +14,8 @@ DROP TABLE IF EXISTS users CASCADE;
 CREATE TABLE users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name VARCHAR(255) NOT NULL,
-  email VARCHAR(255) UNIQUE NOT NULL,
+  email VARCHAR(255) UNIQUE,
+  username VARCHAR(255) UNIQUE,
   password VARCHAR(255) NOT NULL,
   role VARCHAR(50) NOT NULL CHECK (role IN ('superadmin', 'merchant')),
   is_active BOOLEAN DEFAULT TRUE,
@@ -43,6 +44,7 @@ CREATE TABLE merchants (
   merchant_name VARCHAR(255) NOT NULL,
   commission_rate DECIMAL(5,2) NOT NULL DEFAULT 7.00,
   agent_commission_rate DECIMAL(5,2) NOT NULL DEFAULT 5.00,
+  api_key VARCHAR(255) UNIQUE,
   settlement_bank_name VARCHAR(255),
   settlement_account VARCHAR(255),
   settlement_ifsc VARCHAR(50),
@@ -71,8 +73,12 @@ CREATE TABLE payments (
   reference_id VARCHAR(255) UNIQUE,
   bank_name VARCHAR(255),
   account_number VARCHAR(255),
+  account_holder_name VARCHAR(255),
   ifsc VARCHAR(50),
+  upi_id VARCHAR(255),
+  qr_code TEXT,
   utr VARCHAR(255),
+  webhook_url TEXT,
   status VARCHAR(50) DEFAULT 'pending' CHECK (status IN ('pending', 'awaiting_transfer', 'utr_submitted', 'confirmed', 'failed', 'expired')),
   merchant_commission DECIMAL(5,2),
   agent_commission DECIMAL(5,2),
@@ -132,9 +138,10 @@ CREATE INDEX idx_settlements_merchant_id ON settlements(merchant_id);
 CREATE INDEX idx_transaction_history_payment_id ON transaction_history(payment_id);
 
 -- Default Super Admin (password: Admin@123)
-INSERT INTO users (name, email, password, role) VALUES (
+INSERT INTO users (name, email, username, password, role) VALUES (
   'Super Admin',
   'admin@paygateway.com',
+  'admin',
   '$2a$10$rOJKPnrLvHjIvnpvYnWvFuqxQZ8hGzXmR3J2kL1pN7sD4cW6aM5Oe',
   'superadmin'
 );
