@@ -50,10 +50,7 @@ export default function Login() {
             {loading ? <><span className="spinner" style={{ width: 16, height: 16 }}></span> Signing in...</> : 'Sign In'}
           </button>
         </form>
-        <div style={{ marginTop: 24, padding: '16px', background: 'var(--bg-hover)', borderRadius: 'var(--radius-sm)', fontSize: 12, color: 'var(--text-muted)' }}>
-          <strong style={{ color: 'var(--text-secondary)' }}>Default Admin:</strong><br />
-          Username: admin / Password: Admin@123
-        </div>
+        
       </div>
     </div>
   );
