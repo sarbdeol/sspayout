@@ -21,9 +21,6 @@ export default function MerchantDashboard() {
   const [newPayment, setNewPayment] = useState(null);
 
   const merchant = user?.merchant;
-  const platformFee = (
-    (merchant?.commission_rate || 7) - (merchant?.agent_commission_rate || 5)
-  ).toFixed(2);
 
   const load = () => {
     Promise.all([
@@ -36,8 +33,17 @@ export default function MerchantDashboard() {
       })
       .finally(() => setLoading(false));
   };
+
   useEffect(() => {
     load();
+  }, []);
+
+  // Auto refresh every 10 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      load();
+    }, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleCreate = async () => {
@@ -48,7 +54,6 @@ export default function MerchantDashboard() {
     setError("");
     setSaving(true);
     try {
-      // Auto generate order ID
       const auto_order_id = `ORD-${Date.now()}`;
       const res = await merchantAPI.createPayment({
         ...form,
@@ -115,7 +120,7 @@ export default function MerchantDashboard() {
           <button
             className="btn btn-primary"
             onClick={() => {
-              setForm({ amount: "", order_id: "" });
+              setForm({ amount: "" });
               setError("");
               setCreateModal(true);
             }}
@@ -134,12 +139,6 @@ export default function MerchantDashboard() {
           </div>
           <div className="stat-sub">Ready for settlement</div>
         </div>
-        <div className="stat-card accent">
-          <div className="stat-icon">⇄</div>
-          <div className="stat-label">Your Commission</div>
-          <div className="stat-value">{merchant?.commission_rate}%</div>
-          <div className="stat-sub">Charged per transaction</div>
-        </div>
         <div className="stat-card warning">
           <div className="stat-icon">⏳</div>
           <div className="stat-label">Pending</div>
@@ -154,70 +153,77 @@ export default function MerchantDashboard() {
         </div>
       </div>
 
-      {/* Fee info */}
-      <div
-        style={{
-          background: "var(--bg-card)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius)",
-          padding: "16px 20px",
-          marginBottom: 24,
-          display: "flex",
-          gap: 32,
-          alignItems: "center",
-        }}
-      >
-        <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
-          💡 Fee Structure:
-        </div>
-        <div style={{ fontSize: 13 }}>
-          You pay{" "}
-          <strong style={{ color: "var(--warning)" }}>
-            {merchant?.commission_rate}%
-          </strong>{" "}
-          per payment
-        </div>
-        <div style={{ fontSize: 13 }}>
-          You receive{" "}
-          <strong style={{ color: "var(--success)" }}>
-            {(100 - merchant?.commission_rate).toFixed(2)}%
-          </strong>{" "}
-          of each payment
-        </div>
-      </div>
       {/* API Key Box */}
-{merchant?.api_key && (
-  <div style={{
-    background: "var(--bg-card)", border: "1px solid var(--border)",
-    borderRadius: "var(--radius)", padding: "16px 20px", marginBottom: 24,
-  }}>
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-      <div>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
-          🔑 Your API Key
+      {merchant?.api_key && (
+        <div
+          style={{
+            background: "var(--bg-card)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            padding: "16px 20px",
+            marginBottom: 24,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <div>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: "var(--text-muted)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.08em",
+                  marginBottom: 6,
+                }}
+              >
+                🔑 Your API Key
+              </div>
+              <div
+                style={{
+                  fontFamily: "DM Mono, monospace",
+                  fontSize: 13,
+                  color: "var(--accent)",
+                }}
+              >
+                {merchant?.api_key}
+              </div>
+            </div>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                navigator.clipboard.writeText(merchant?.api_key);
+                alert("API Key copied!");
+              }}
+            >
+              Copy
+            </button>
+          </div>
+          <div
+            style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 10 }}
+          >
+            Integration endpoint:
+            <code
+              style={{
+                fontFamily: "DM Mono, monospace",
+                background: "var(--bg-hover)",
+                padding: "2px 8px",
+                borderRadius: 4,
+                marginLeft: 6,
+                fontSize: 11,
+                color: "var(--text-secondary)",
+              }}
+            >
+              POST https://ss.sspay.online/api/payin
+            </code>
+          </div>
         </div>
-        <div style={{ fontFamily: "DM Mono, monospace", fontSize: 13, color: "var(--accent)" }}>
-          {merchant?.api_key}
-        </div>
-      </div>
-      <button
-        className="btn btn-secondary btn-sm"
-        onClick={() => {
-          navigator.clipboard.writeText(merchant?.api_key);
-          alert("API Key copied!");
-        }}
-      >
-        Copy
-      </button>
-    </div>
-    <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 10 }}>
-      Integration endpoint:
-      <code style={{ fontFamily: "DM Mono, monospace", background: "var(--bg-hover)", padding: "2px 8px", borderRadius: 4, marginLeft: 6, fontSize: 11, color: "var(--text-secondary)" }}>
-        POST https://ss.sspay.online/api/payin
-      </code>
-    </div>
-  </div>
-)}
+      )}
 
       <div className="card">
         <div
@@ -231,7 +237,6 @@ export default function MerchantDashboard() {
           <div style={{ fontWeight: 700, fontSize: 15 }}>
             Recent Transactions
           </div>
-          
           <a href="/merchant/payments" className="btn btn-secondary btn-sm">
             View All
           </a>
@@ -247,7 +252,6 @@ export default function MerchantDashboard() {
                 <tr>
                   <th>Order ID</th>
                   <th>Amount</th>
-                  <th>You Receive</th>
                   <th>Bank Details</th>
                   <th>UTR</th>
                   <th>Status</th>
@@ -258,7 +262,7 @@ export default function MerchantDashboard() {
               <tbody>
                 {payments.length === 0 ? (
                   <tr>
-                    <td colSpan={8}>
+                    <td colSpan={7}>
                       <div className="empty-state">
                         <div className="empty-state-icon">⇄</div>
                         <div className="empty-state-text">
@@ -280,9 +284,6 @@ export default function MerchantDashboard() {
                         {p.order_id}
                       </td>
                       <td className="amount">{formatAmount(p.amount)}</td>
-                      <td className="amount-positive">
-                        {formatAmount(p.merchant_credit_amount)}
-                      </td>
                       <td style={{ fontSize: 12 }}>
                         {p.bank_name ? (
                           <>
@@ -359,62 +360,6 @@ export default function MerchantDashboard() {
                   onChange={(e) => setForm({ ...form, amount: e.target.value })}
                 />
               </div>
-              {form.amount && (
-                <div
-                  style={{
-                    background: "var(--bg-hover)",
-                    borderRadius: "var(--radius-sm)",
-                    padding: "12px 16px",
-                    marginBottom: 16,
-                    fontSize: 13,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      marginBottom: 4,
-                    }}
-                  >
-                    <span style={{ color: "var(--text-muted)" }}>
-                      Payment Amount:
-                    </span>
-                    <span className="amount">{formatAmount(form.amount)}</span>
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      marginBottom: 4,
-                    }}
-                  >
-                    <span style={{ color: "var(--text-muted)" }}>
-                      Commission ({merchant?.commission_rate}%):
-                    </span>
-                    <span style={{ color: "var(--danger)" }}>
-                      -
-                      {formatAmount(
-                        (form.amount * merchant?.commission_rate) / 100,
-                      )}
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      fontWeight: 700,
-                    }}
-                  >
-                    <span>You Receive:</span>
-                    <span className="amount-positive">
-                      {formatAmount(
-                        form.amount -
-                          (form.amount * merchant?.commission_rate) / 100,
-                      )}
-                    </span>
-                  </div>
-                </div>
-              )}
             </div>
             <div className="modal-footer">
               <button
