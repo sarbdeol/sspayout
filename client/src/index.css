@@ -344,3 +344,36 @@ select.form-control option { background: var(--bg-card); }
   .page { padding: 16px; }
   .form-row, .form-row-3 { grid-template-columns: 1fr; }
 }
+/* Mobile Topbar */
+.mobile-topbar { display: none; }
+.mobile-overlay { display: none; }
+
+/* Mobile Responsive */
+@media (max-width: 768px) {
+  .mobile-topbar { display: flex !important; }
+  .mobile-overlay { display: block !important; }
+
+  .sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    z-index: 160;
+  }
+  .sidebar.mobile-open {
+    transform: translateX(0);
+  }
+
+  .main-content {
+    margin-left: 0 !important;
+    padding-top: 60px;
+  }
+
+  .page { padding: 16px; }
+  .form-row, .form-row-3 { grid-template-columns: 1fr; }
+  .stats-grid { grid-template-columns: 1fr 1fr; }
+  .filter-bar { flex-direction: column; align-items: stretch; }
+  .page-header-row { flex-direction: column; gap: 12px; }
+}
+
+@media (max-width: 480px) {
+  .stats-grid { grid-template-columns: 1fr; }
+}
