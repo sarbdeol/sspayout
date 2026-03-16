@@ -28,8 +28,7 @@ export default function Login() {
     <div className="login-page">
       <div className="login-card">
         <div className="login-logo">
-          <img src="/sspaylogo.png" alt="SSPay" style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'contain' }} />
-
+          <img src="/sspayicon.png" alt="SSPay" style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'contain' }} />
           <div>
             <div className="login-title">SSPay Gateway</div>
             <div className="login-subtitle">Management System</div>
