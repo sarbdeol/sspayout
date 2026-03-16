@@ -21,6 +21,7 @@ export default function MerchantsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
+  const [copiedId, setCopiedId] = useState(null);
 
   const load = () => {
     Promise.all([adminAPI.getMerchants(), adminAPI.getAgents()])
@@ -79,6 +80,13 @@ export default function MerchantsPage() {
   };
 
   const handleToggle = async (id) => { await adminAPI.toggleMerchant(id); load(); };
+
+  const handleCopyCreds = (m) => {
+    const creds = `🔐 Login Credentials\n\nURL: https://ss.sspay.online\nUsername: ${m.username || m.name}\nPassword: ${m.plain_password || 'N/A'}`;
+    navigator.clipboard.writeText(creds);
+    setCopiedId(m.id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
 
   const platformFee = (form.commission_rate - form.agent_commission_rate).toFixed(2);
   const filtered = merchants.filter(m =>
@@ -143,6 +151,13 @@ export default function MerchantsPage() {
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button className="btn btn-secondary btn-sm" onClick={() => openEdit(m)}>Edit</button>
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          style={{ color: copiedId === m.id ? 'var(--success)' : 'var(--accent)' }}
+                          onClick={() => handleCopyCreds(m)}
+                        >
+                          {copiedId === m.id ? '✓ Copied!' : '📋 Creds'}
+                        </button>
                         <button className={`btn btn-sm ${m.is_active ? 'btn-danger' : 'btn-success'}`} onClick={() => handleToggle(m.id)}>
                           {m.is_active ? 'Deactivate' : 'Activate'}
                         </button>
@@ -181,7 +196,7 @@ export default function MerchantsPage() {
                     </div>
                     <div className="form-group">
                       <label className="form-label">Password *</label>
-                      <input className="form-control" type="password" placeholder="••••••••" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
+                      <input className="form-control" type="text" placeholder="Enter password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
                     </div>
                   </div>
                   <hr className="section-divider" />

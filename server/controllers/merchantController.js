@@ -12,7 +12,6 @@ const createMerchant = async (req, res) => {
     if (!name || !username || !password || !merchant_name)
       return res.status(400).json({ success: false, message: 'Required fields missing' });
 
-    // Check username already exists
     const existing = await db.query('SELECT id FROM users WHERE username=$1', [username]);
     if (existing.rows.length > 0)
       return res.status(400).json({ success: false, message: 'Username already exists' });
@@ -31,10 +30,10 @@ const createMerchant = async (req, res) => {
 
       const merchantResult = await client.query(
         `INSERT INTO merchants (user_id, merchant_name, commission_rate, agent_commission_rate,
-         settlement_bank_name, settlement_account, settlement_ifsc)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+         settlement_bank_name, settlement_account, settlement_ifsc, plain_password)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
         [user.id, merchant_name, commission_rate || 7.00, agent_commission_rate || 5.00,
-         settlement_bank_name, settlement_account, settlement_ifsc]
+         settlement_bank_name, settlement_account, settlement_ifsc, password]
       );
 
       await client.query(
@@ -59,7 +58,7 @@ const createMerchant = async (req, res) => {
 const getAllMerchants = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT m.*, u.name, u.email, u.is_active,
+      SELECT m.*, u.name, u.email, u.username, u.is_active, m.plain_password,
         COALESCE(
           json_agg(
             json_build_object('id', a.id, 'agent_name', a.agent_name, 'is_primary', ma.is_primary)
@@ -72,7 +71,7 @@ const getAllMerchants = async (req, res) => {
       LEFT JOIN merchant_agents ma ON ma.merchant_id = m.id
       LEFT JOIN agents a ON a.id = ma.agent_id
       LEFT JOIN ledger l ON l.merchant_id = m.id
-      GROUP BY m.id, u.name, u.email, u.is_active
+      GROUP BY m.id, u.name, u.email, u.username, u.is_active, m.plain_password
       ORDER BY m.created_at DESC
     `);
     res.json({ success: true, merchants: result.rows });
@@ -85,7 +84,7 @@ const getAllMerchants = async (req, res) => {
 const getMerchant = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT m.*, u.name, u.email, u.is_active
+      SELECT m.*, u.name, u.email, u.username, u.is_active
       FROM merchants m JOIN users u ON u.id = m.user_id
       WHERE m.id = $1
     `, [req.params.id]);
