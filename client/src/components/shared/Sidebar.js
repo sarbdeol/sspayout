@@ -35,7 +35,7 @@ export default function Sidebar() {
       <div className="sidebar-logo">
         <div className="logo-icon">⚡</div>
         <div>
-          <div className="logo-text">PayGateway</div>
+          <div className="logo-text">SSPay Gateway</div>
           <div className="logo-sub">{user?.role === 'superadmin' ? 'Super Admin' : 'Merchant Portal'}</div>
         </div>
       </div>

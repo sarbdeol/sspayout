@@ -30,7 +30,7 @@ export default function Login() {
         <div className="login-logo">
           <div className="logo-icon">⚡</div>
           <div>
-            <div className="login-title">PayGateway</div>
+            <div className="login-title">SSPay Gateway</div>
             <div className="login-subtitle">Management System</div>
           </div>
         </div>
