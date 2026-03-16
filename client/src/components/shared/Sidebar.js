@@ -46,7 +46,7 @@ export default function Sidebar() {
     <div className="sidebar">
       <div className="sidebar-logo">
         <img
-          src="/sspaylogo.png"
+          src="/apple-touch-icon.png"
           alt="SSPay"
           style={{
             width: 36,
