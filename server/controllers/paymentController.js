@@ -231,8 +231,10 @@ const submitUTR = async (req, res) => {
       ]);
       if (agentResult.rows.length > 0) {
         const agent = agentResult.rows[0];
+        const proofEndpoint = agent.api_endpoint.replace('payin-create', 'payment-proof');
+        console.log("✅ Submitting proof to:", proofEndpoint);
         await axios.patch(
-          "https://api.bytexhub.com/transactions/payment-proof",
+          proofEndpoint,
           {
             transactionId: payment.reference_id,
             utrNumber: utr,
