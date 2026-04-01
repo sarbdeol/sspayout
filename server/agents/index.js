@@ -1,0 +1,12 @@
+const getAgentHandler = (apiEndpoint) => {
+  if (!apiEndpoint) return require('./indopay');
+  
+  if (apiEndpoint.includes('bhumipay')) return require('./bhumipay');
+  if (apiEndpoint.includes('indupay') || apiEndpoint.includes('bytexhub')) return require('./indopay');
+  
+  // Default fallback
+  console.log('Unknown agent endpoint, using indopay handler:', apiEndpoint);
+  return require('./indopay');
+};
+
+module.exports = { getAgentHandler };

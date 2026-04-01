@@ -1,10 +1,18 @@
 const db = require("../models/db");
 const { v4: uuidv4 } = require("uuid");
 const axios = require("axios");
+const { getAgentHandler } = require("../agents");
 
 const createPayment = async (req, res) => {
   try {
-    const { amount, order_id, webhook_url } = req.body;
+    const {
+      amount,
+      order_id,
+      webhook_url,
+      customer_name,
+      customer_mobile,
+      customer_email,
+    } = req.body;
     const merchant_id = req.user.merchant?.id;
 
     if (!merchant_id)
@@ -16,7 +24,6 @@ const createPayment = async (req, res) => {
         .status(400)
         .json({ success: false, message: "Amount and order_id required" });
 
-    // Get merchant with commission rates
     const merchantResult = await db.query(
       "SELECT * FROM merchants WHERE id=$1 AND is_active=TRUE",
       [merchant_id],
@@ -27,22 +34,21 @@ const createPayment = async (req, res) => {
         .json({ success: false, message: "Merchant not active" });
     const merchant = merchantResult.rows[0];
 
-    // Get primary agent
     const agentResult = await db.query(
-      `
-      SELECT a.* FROM agents a
-      JOIN merchant_agents ma ON ma.agent_id = a.id
-      WHERE ma.merchant_id=$1 AND ma.is_primary=TRUE AND a.is_active=TRUE
-      LIMIT 1
-    `,
+      `SELECT a.* FROM agents a
+       JOIN merchant_agents ma ON ma.agent_id = a.id
+       WHERE ma.merchant_id=$1 AND ma.is_primary=TRUE AND a.is_active=TRUE
+       LIMIT 1`,
       [merchant_id],
     );
 
     if (agentResult.rows.length === 0)
-      return res.status(400).json({
-        success: false,
-        message: "No active agent assigned to merchant",
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "No active agent assigned to merchant",
+        });
     const agent = agentResult.rows[0];
 
     // Calculate fees
@@ -55,9 +61,9 @@ const createPayment = async (req, res) => {
     const merchantCreditAmount = amount - feeAmount;
 
     let reference_id = `PAY-${uuidv4().split("-")[0].toUpperCase()}-${Date.now()}`;
-    const expires_at = new Date(Date.now() + 30 * 60 * 1000); // 30 mins
+    const expires_at = new Date(Date.now() + 30 * 60 * 1000);
 
-    // Call agent API
+    // Call agent API using handler
     let bankDetails = {
       bank_name: null,
       account_number: null,
@@ -66,69 +72,45 @@ const createPayment = async (req, res) => {
       qr_code: null,
       account_holder_name: null,
     };
+
     try {
-      const agentPayload = buildAgentPayload(agent.payload_structure, {
+      const handler = getAgentHandler(agent.api_endpoint);
+      const result = await handler.createPayment(agent, {
         amount,
         order_id,
         reference_id,
-        merchant_id,
-      });
-      const agentResponse = await axios.post(agent.api_endpoint, agentPayload, {
-        headers: {
-          "api-key": agent.api_key,
-          "Content-Type": "application/json",
+        customer: {
+          name: customer_name || "Customer",
+          mobile: customer_mobile || "9999999999",
+          email: customer_email || "customer@example.com",
         },
-        timeout: 10000,
       });
-
-      // Check if response is success
-      if (!agentResponse.data || agentResponse.data.code !== 200) {
-        return res.status(400).json({
-          success: false,
-          message:
-            agentResponse.data?.message || "Agent failed to create payment",
-        });
-      }
-
-      const d = agentResponse.data.data;
-      bankDetails = {
-        bank_name: d.bank_name,
-        account_number: d.account_number,
-        ifsc: d.ifsc_code,
-        upi_id: d.upi_id || null,
-        qr_code: d.qrCode || null,
-        account_holder_name: d.account_holder_name || null,
-      };
-
-      // Use BytexHub transaction_id as reference_id
-      if (d.transaction_id) reference_id = d.transaction_id;
+      bankDetails = result;
+      reference_id = result.reference_id || reference_id;
     } catch (agentErr) {
+      console.error("Agent API error:", agentErr.message);
       if (agentErr.response) {
-        console.error("Agent API error status:", agentErr.response.status);
         console.error(
           "Agent API error body:",
           JSON.stringify(agentErr.response.data, null, 2),
         );
-      } else {
-        console.error("Agent API error:", agentErr.message);
       }
       return res.status(400).json({
         success: false,
         message:
           agentErr.response?.data?.message ||
+          agentErr.message ||
           "Payment gateway unavailable. Please try again.",
       });
     }
 
-    // ✅ Only reaches here if agent API succeeded
-
     const paymentResult = await db.query(
       `INSERT INTO payments (merchant_id, agent_id, amount, order_id, reference_id,
-    bank_name, account_number, ifsc, upi_id, qr_code, account_holder_name, 
-    webhook_url, status, merchant_commission, agent_commission,
-    platform_fee_amount, merchant_credit_amount, agent_fee_amount, expires_at)
-   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'awaiting_transfer',$13,$14,$15,$16,$17,$18)
-   RETURNING *`,
+       bank_name, account_number, ifsc, upi_id, qr_code, account_holder_name,
+       webhook_url, status, merchant_commission, agent_commission,
+       platform_fee_amount, merchant_credit_amount, agent_fee_amount, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'awaiting_transfer',$13,$14,$15,$16,$17,$18)
+       RETURNING *`,
       [
         merchant_id,
         agent.id,
@@ -167,32 +149,6 @@ const createPayment = async (req, res) => {
   }
 };
 
-const buildAgentPayload = (payloadStructure, data) => {
-  if (!payloadStructure || Object.keys(payloadStructure).length === 0) {
-    return {
-      amount: String(data.amount), // ← string
-      order_id: data.order_id,
-      reference_id: data.reference_id,
-    };
-  }
-  const payload = {};
-  for (const [key, value] of Object.entries(payloadStructure)) {
-    if (
-      typeof value === "string" &&
-      value.startsWith("{{") &&
-      value.endsWith("}}")
-    ) {
-      const field = value.slice(2, -2).trim();
-      // ← convert amount to string
-      const rawValue = data[field] || value;
-      payload[key] = field === "amount" ? String(rawValue) : rawValue;
-    } else {
-      payload[key] = value;
-    }
-  }
-  return payload;
-};
-
 const submitUTR = async (req, res) => {
   try {
     const { payment_id } = req.params;
@@ -209,45 +165,36 @@ const submitUTR = async (req, res) => {
       [utr, payment_id, merchant_id],
     );
 
-    // ✅ Check FIRST before using result.rows[0]
     if (result.rows.length === 0)
-      return res.status(404).json({
-        success: false,
-        message: "Payment not found or invalid status",
-      });
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: "Payment not found or invalid status",
+        });
 
     const payment = result.rows[0];
 
-    // ✅ Now safe to use payment
     await db.query(
       `INSERT INTO transaction_history (merchant_id, payment_id, event, data) VALUES ($1, $2, 'utr_submitted', $3)`,
       [merchant_id, payment_id, JSON.stringify({ utr })],
     );
 
-    // Notify BytexHub about the UTR
+    // Submit proof to agent using handler
     try {
       const agentResult = await db.query("SELECT * FROM agents WHERE id=$1", [
         payment.agent_id,
       ]);
       if (agentResult.rows.length > 0) {
         const agent = agentResult.rows[0];
-        const proofEndpoint = agent.api_endpoint.replace('payin-create', 'payment-proof');
-        console.log("✅ Submitting proof to:", proofEndpoint);
-        await axios.patch(
-          proofEndpoint,
-          {
-            transactionId: payment.reference_id,
-            utrNumber: utr,
-          },
-          {
-            headers: { "api-key": agent.api_key },
-          },
-        );
-        console.log("✅ Payment proof submitted to BytexHub");
+        const handler = getAgentHandler(agent.api_endpoint);
+        await handler.submitProof(agent, {
+          reference_id: payment.reference_id,
+          utr,
+        });
       }
     } catch (proofErr) {
       console.error("⚠️ Failed to submit proof to agent:", proofErr.message);
-      // Don't fail the whole request if BytexHub call fails
     }
 
     res.json({ success: true, payment });
@@ -256,6 +203,7 @@ const submitUTR = async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
+
 const getMerchantPayments = async (req, res) => {
   try {
     const merchant_id = req.user.merchant?.id;
@@ -286,12 +234,10 @@ const getMerchantPayments = async (req, res) => {
     params.push(limit, offset);
 
     const result = await db.query(
-      `
-      SELECT p.*, a.agent_name FROM payments p
-      LEFT JOIN agents a ON a.id = p.agent_id
-      WHERE ${where} ORDER BY p.created_at DESC
-      LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}
-    `,
+      `SELECT p.*, a.agent_name FROM payments p
+       LEFT JOIN agents a ON a.id = p.agent_id
+       WHERE ${where} ORDER BY p.created_at DESC
+       LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`,
       params,
     );
 
@@ -348,13 +294,11 @@ const getAllPayments = async (req, res) => {
     params.push(limit, offset);
 
     const result = await db.query(
-      `
-      SELECT p.*, a.agent_name, m.merchant_name FROM payments p
-      LEFT JOIN agents a ON a.id = p.agent_id
-      LEFT JOIN merchants m ON m.id = p.merchant_id
-      ${where} ORDER BY p.created_at DESC
-      LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}
-    `,
+      `SELECT p.*, a.agent_name, m.merchant_name FROM payments p
+       LEFT JOIN agents a ON a.id = p.agent_id
+       LEFT JOIN merchants m ON m.id = p.merchant_id
+       ${where} ORDER BY p.created_at DESC
+       LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`,
       params,
     );
 
@@ -403,10 +347,53 @@ const getAdminStats = async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
+const submitUTRByApi = async (req, res) => {
+  try {
+    const { transaction_id, utr } = req.body;
+    const merchant_id = req.merchant.id; // comes from apiKeyAuth middleware
 
+    if (!transaction_id || !utr)
+      return res.status(400).json({ success: false, message: 'transaction_id and utr are required' });
+
+    const result = await db.query(
+      `UPDATE payments SET utr=$1, status='utr_submitted', updated_at=NOW()
+       WHERE id=$2 AND merchant_id=$3 AND status='awaiting_transfer'
+       RETURNING *`,
+      [utr, transaction_id, merchant_id]
+    );
+
+    if (result.rows.length === 0)
+      return res.status(404).json({ success: false, message: 'Payment not found or invalid status' });
+
+    const payment = result.rows[0];
+
+    await db.query(
+      `INSERT INTO transaction_history (merchant_id, payment_id, event, data) VALUES ($1, $2, 'utr_submitted', $3)`,
+      [merchant_id, payment.id, JSON.stringify({ utr, source: 'api' })]
+    );
+
+    // Submit proof to agent
+    try {
+      const agentResult = await db.query('SELECT * FROM agents WHERE id=$1', [payment.agent_id]);
+      if (agentResult.rows.length > 0) {
+        const agent = agentResult.rows[0];
+        const handler = getAgentHandler(agent.api_endpoint);
+        await handler.submitProof(agent, { reference_id: payment.reference_id, utr });
+      }
+    } catch (proofErr) {
+      console.error('Failed to submit proof to agent:', proofErr.message);
+    }
+
+    res.json({ success: true, message: 'UTR submitted successfully', payment });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
 module.exports = {
   createPayment,
   submitUTR,
+  submitUTRByApi,
   getMerchantPayments,
   getAllPayments,
   getAdminStats,

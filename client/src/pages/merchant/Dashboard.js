@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { QRCodeCanvas } from 'qrcode.react';
 import { merchantAPI } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import StatusBadge, {
@@ -21,9 +22,6 @@ export default function MerchantDashboard() {
   const [newPayment, setNewPayment] = useState(null);
 
   const merchant = user?.merchant;
-  const platformFee = (
-    (merchant?.commission_rate || 7) - (merchant?.agent_commission_rate || 5)
-  ).toFixed(2);
 
   const load = () => {
     Promise.all([
@@ -36,8 +34,17 @@ export default function MerchantDashboard() {
       })
       .finally(() => setLoading(false));
   };
+
   useEffect(() => {
     load();
+  }, []);
+
+  // Auto refresh every 10 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      load();
+    }, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleCreate = async () => {
@@ -48,7 +55,6 @@ export default function MerchantDashboard() {
     setError("");
     setSaving(true);
     try {
-      // Auto generate order ID
       const auto_order_id = `ORD-${Date.now()}`;
       const res = await merchantAPI.createPayment({
         ...form,
@@ -102,6 +108,12 @@ export default function MerchantDashboard() {
     ["pending", "awaiting_transfer", "utr_submitted"].includes(p.status),
   ).length;
 
+  // Check if payment has bank details or UPI
+  const hasPaymentDetails = (p) => p?.bank_name || p?.upi_id || p?.qr_code;
+  // Check if BhumiPay (UPI only payment)
+  const isUPIOnly = (p) =>
+    p?.bank_name === "UPI Payment" || (!p?.account_number && p?.upi_id);
+
   return (
     <div className="page">
       <div className="page-header">
@@ -115,7 +127,7 @@ export default function MerchantDashboard() {
           <button
             className="btn btn-primary"
             onClick={() => {
-              setForm({ amount: "", order_id: "" });
+              setForm({ amount: "" });
               setError("");
               setCreateModal(true);
             }}
@@ -134,12 +146,6 @@ export default function MerchantDashboard() {
           </div>
           <div className="stat-sub">Ready for settlement</div>
         </div>
-        <div className="stat-card accent">
-          <div className="stat-icon">⇄</div>
-          <div className="stat-label">Your Commission</div>
-          <div className="stat-value">{merchant?.commission_rate}%</div>
-          <div className="stat-sub">Charged per transaction</div>
-        </div>
         <div className="stat-card warning">
           <div className="stat-icon">⏳</div>
           <div className="stat-label">Pending</div>
@@ -154,70 +160,77 @@ export default function MerchantDashboard() {
         </div>
       </div>
 
-      {/* Fee info */}
-      <div
-        style={{
-          background: "var(--bg-card)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius)",
-          padding: "16px 20px",
-          marginBottom: 24,
-          display: "flex",
-          gap: 32,
-          alignItems: "center",
-        }}
-      >
-        <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
-          💡 Fee Structure:
-        </div>
-        <div style={{ fontSize: 13 }}>
-          You pay{" "}
-          <strong style={{ color: "var(--warning)" }}>
-            {merchant?.commission_rate}%
-          </strong>{" "}
-          per payment
-        </div>
-        <div style={{ fontSize: 13 }}>
-          You receive{" "}
-          <strong style={{ color: "var(--success)" }}>
-            {(100 - merchant?.commission_rate).toFixed(2)}%
-          </strong>{" "}
-          of each payment
-        </div>
-      </div>
       {/* API Key Box */}
-{merchant?.api_key && (
-  <div style={{
-    background: "var(--bg-card)", border: "1px solid var(--border)",
-    borderRadius: "var(--radius)", padding: "16px 20px", marginBottom: 24,
-  }}>
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-      <div>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
-          🔑 Your API Key
+      {merchant?.api_key && (
+        <div
+          style={{
+            background: "var(--bg-card)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            padding: "16px 20px",
+            marginBottom: 24,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <div>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: "var(--text-muted)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.08em",
+                  marginBottom: 6,
+                }}
+              >
+                🔑 Your API Key
+              </div>
+              <div
+                style={{
+                  fontFamily: "DM Mono, monospace",
+                  fontSize: 13,
+                  color: "var(--accent)",
+                }}
+              >
+                {merchant?.api_key}
+              </div>
+            </div>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                navigator.clipboard.writeText(merchant?.api_key);
+                alert("API Key copied!");
+              }}
+            >
+              Copy
+            </button>
+          </div>
+          <div
+            style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 10 }}
+          >
+            Integration endpoint:
+            <code
+              style={{
+                fontFamily: "DM Mono, monospace",
+                background: "var(--bg-hover)",
+                padding: "2px 8px",
+                borderRadius: 4,
+                marginLeft: 6,
+                fontSize: 11,
+                color: "var(--text-secondary)",
+              }}
+            >
+              POST https://ss.sspay.online/api/payin
+            </code>
+          </div>
         </div>
-        <div style={{ fontFamily: "DM Mono, monospace", fontSize: 13, color: "var(--accent)" }}>
-          {merchant?.api_key}
-        </div>
-      </div>
-      <button
-        className="btn btn-secondary btn-sm"
-        onClick={() => {
-          navigator.clipboard.writeText(merchant?.api_key);
-          alert("API Key copied!");
-        }}
-      >
-        Copy
-      </button>
-    </div>
-    <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 10 }}>
-      Integration endpoint:
-      <code style={{ fontFamily: "DM Mono, monospace", background: "var(--bg-hover)", padding: "2px 8px", borderRadius: 4, marginLeft: 6, fontSize: 11, color: "var(--text-secondary)" }}>
-        POST https://ss.sspay.online/api/payin
-      </code>
-    </div>
-  </div>
-)}
+      )}
 
       <div className="card">
         <div
@@ -231,7 +244,6 @@ export default function MerchantDashboard() {
           <div style={{ fontWeight: 700, fontSize: 15 }}>
             Recent Transactions
           </div>
-          
           <a href="/merchant/payments" className="btn btn-secondary btn-sm">
             View All
           </a>
@@ -247,7 +259,6 @@ export default function MerchantDashboard() {
                 <tr>
                   <th>Order ID</th>
                   <th>Amount</th>
-                  <th>You Receive</th>
                   <th>Bank Details</th>
                   <th>UTR</th>
                   <th>Status</th>
@@ -258,7 +269,7 @@ export default function MerchantDashboard() {
               <tbody>
                 {payments.length === 0 ? (
                   <tr>
-                    <td colSpan={8}>
+                    <td colSpan={7}>
                       <div className="empty-state">
                         <div className="empty-state-icon">⇄</div>
                         <div className="empty-state-text">
@@ -280,11 +291,8 @@ export default function MerchantDashboard() {
                         {p.order_id}
                       </td>
                       <td className="amount">{formatAmount(p.amount)}</td>
-                      <td className="amount-positive">
-                        {formatAmount(p.merchant_credit_amount)}
-                      </td>
                       <td style={{ fontSize: 12 }}>
-                        {p.bank_name ? (
+                        {p.account_number ? (
                           <>
                             <div>{p.bank_name}</div>
                             <div
@@ -296,6 +304,12 @@ export default function MerchantDashboard() {
                               {p.account_number}
                             </div>
                           </>
+                        ) : p.upi_id ? (
+                          <span
+                            style={{ color: "var(--accent)", fontSize: 11 }}
+                          >
+                            📱 UPI Payment
+                          </span>
                         ) : (
                           "-"
                         )}
@@ -359,62 +373,6 @@ export default function MerchantDashboard() {
                   onChange={(e) => setForm({ ...form, amount: e.target.value })}
                 />
               </div>
-              {form.amount && (
-                <div
-                  style={{
-                    background: "var(--bg-hover)",
-                    borderRadius: "var(--radius-sm)",
-                    padding: "12px 16px",
-                    marginBottom: 16,
-                    fontSize: 13,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      marginBottom: 4,
-                    }}
-                  >
-                    <span style={{ color: "var(--text-muted)" }}>
-                      Payment Amount:
-                    </span>
-                    <span className="amount">{formatAmount(form.amount)}</span>
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      marginBottom: 4,
-                    }}
-                  >
-                    <span style={{ color: "var(--text-muted)" }}>
-                      Commission ({merchant?.commission_rate}%):
-                    </span>
-                    <span style={{ color: "var(--danger)" }}>
-                      -
-                      {formatAmount(
-                        (form.amount * merchant?.commission_rate) / 100,
-                      )}
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      fontWeight: 700,
-                    }}
-                  >
-                    <span>You Receive:</span>
-                    <span className="amount-positive">
-                      {formatAmount(
-                        form.amount -
-                          (form.amount * merchant?.commission_rate) / 100,
-                      )}
-                    </span>
-                  </div>
-                </div>
-              )}
             </div>
             <div className="modal-footer">
               <button
@@ -454,7 +412,8 @@ export default function MerchantDashboard() {
             </div>
             <div className="modal-body">
               {error && <div className="alert alert-error">{error}</div>}
-              {selectedPayment.bank_name ? (
+
+              {hasPaymentDetails(selectedPayment) ? (
                 <div
                   style={{
                     background: "var(--bg-hover)",
@@ -476,72 +435,99 @@ export default function MerchantDashboard() {
                     Transfer To
                   </div>
                   <div style={{ display: "grid", gap: 8, fontSize: 13 }}>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <span style={{ color: "var(--text-muted)" }}>Bank:</span>
-                      <strong>{selectedPayment.bank_name}</strong>
-                    </div>
-                    {selectedPayment.account_holder_name && (
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                        }}
-                      >
-                        <span style={{ color: "var(--text-muted)" }}>
-                          Account Name:
-                        </span>
-                        <strong>{selectedPayment.account_holder_name}</strong>
-                      </div>
+                    {/* Show bank details only for non-UPI agents */}
+                    {!isUPIOnly(selectedPayment) && (
+                      <>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                          }}
+                        >
+                          <span style={{ color: "var(--text-muted)" }}>
+                            Bank:
+                          </span>
+                          <strong>{selectedPayment.bank_name}</strong>
+                        </div>
+                        {selectedPayment.account_holder_name && (
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                            }}
+                          >
+                            <span style={{ color: "var(--text-muted)" }}>
+                              Account Name:
+                            </span>
+                            <strong>
+                              {selectedPayment.account_holder_name}
+                            </strong>
+                          </div>
+                        )}
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                          }}
+                        >
+                          <span style={{ color: "var(--text-muted)" }}>
+                            Account:
+                          </span>
+                          <strong style={{ fontFamily: "DM Mono, monospace" }}>
+                            {selectedPayment.account_number}
+                          </strong>
+                        </div>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                          }}
+                        >
+                          <span style={{ color: "var(--text-muted)" }}>
+                            IFSC:
+                          </span>
+                          <strong style={{ fontFamily: "DM Mono, monospace" }}>
+                            {selectedPayment.ifsc}
+                          </strong>
+                        </div>
+                      </>
                     )}
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <span style={{ color: "var(--text-muted)" }}>
-                        Account:
-                      </span>
-                      <strong style={{ fontFamily: "DM Mono, monospace" }}>
-                        {selectedPayment.account_number}
-                      </strong>
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <span style={{ color: "var(--text-muted)" }}>IFSC:</span>
-                      <strong style={{ fontFamily: "DM Mono, monospace" }}>
-                        {selectedPayment.ifsc}
-                      </strong>
-                    </div>
+
+                    {/* UPI ID - show as link for UPI intent, text for normal UPI */}
                     {selectedPayment.upi_id && (
                       <div
                         style={{
                           display: "flex",
                           justifyContent: "space-between",
+                          alignItems: "center",
                         }}
                       >
-                        <span style={{ color: "var(--text-muted)" }}>
-                          UPI ID:
-                        </span>
-                        <strong
-                          style={{
-                            fontFamily: "DM Mono, monospace",
-                            color: "var(--accent)",
-                          }}
-                        >
-                          {selectedPayment.upi_id}
-                        </strong>
+                        <span style={{ color: "var(--text-muted)" }}>UPI:</span>
+                        {selectedPayment.upi_id.startsWith("upi://") ? (
+                          <a
+                            href={selectedPayment.upi_id}
+                            style={{
+                              color: "var(--accent)",
+                              fontSize: 13,
+                              fontWeight: 600,
+                              textDecoration: "none",
+                            }}
+                          >
+                            📱 Open UPI App
+                          </a>
+                        ) : (
+                          <strong
+                            style={{
+                              fontFamily: "DM Mono, monospace",
+                              color: "var(--accent)",
+                            }}
+                          >
+                            {selectedPayment.upi_id}
+                          </strong>
+                        )}
                       </div>
                     )}
+
                     <div
                       style={{
                         display: "flex",
@@ -556,6 +542,8 @@ export default function MerchantDashboard() {
                       </strong>
                     </div>
                   </div>
+
+                  {/* QR Code */}
                   {selectedPayment.qr_code && (
                     <div
                       style={{
@@ -587,18 +575,19 @@ export default function MerchantDashboard() {
                           padding: 8,
                         }}
                       />
-                      {selectedPayment.upi_id && (
-                        <div
-                          style={{
-                            marginTop: 8,
-                            fontSize: 12,
-                            color: "var(--accent)",
-                            fontFamily: "DM Mono, monospace",
-                          }}
-                        >
-                          {selectedPayment.upi_id}
-                        </div>
-                      )}
+                      {selectedPayment.upi_id &&
+                        !selectedPayment.upi_id.startsWith("upi://") && (
+                          <div
+                            style={{
+                              marginTop: 8,
+                              fontSize: 12,
+                              color: "var(--accent)",
+                              fontFamily: "DM Mono, monospace",
+                            }}
+                          >
+                            {selectedPayment.upi_id}
+                          </div>
+                        )}
                     </div>
                   )}
                 </div>
@@ -608,6 +597,7 @@ export default function MerchantDashboard() {
                   support.
                 </div>
               )}
+
               <div className="form-group">
                 <label className="form-label">
                   Transaction UTR / Reference Number
@@ -632,10 +622,11 @@ export default function MerchantDashboard() {
               >
                 Close
               </button>
+              {/* Allow submit UTR for both bank and UPI payments */}
               <button
                 className="btn btn-primary"
                 onClick={handleUTR}
-                disabled={saving || !selectedPayment.bank_name}
+                disabled={saving || !hasPaymentDetails(selectedPayment)}
               >
                 {saving ? "Submitting..." : "Submit UTR"}
               </button>

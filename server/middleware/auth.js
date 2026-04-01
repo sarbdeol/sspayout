@@ -14,7 +14,28 @@ const authMiddleware = (req, res, next) => {
     return res.status(401).json({ success: false, message: 'Invalid or expired token' });
   }
 };
+const apiKeyAuth = async (req, res, next) => {
+  const apiKey = req.headers['x-api-key'];
+  if (!apiKey) {
+    return res.status(401).json({ success: false, message: 'API key required' });
+  }
+  try {
+    const db = require('../models/db');
+    const result = await db.query(
+      'SELECT * FROM merchants WHERE api_key=$1 AND is_active=TRUE',
+      [apiKey]
+    );
+    if (result.rows.length === 0) {
+      return res.status(401).json({ success: false, message: 'Invalid API key' });
+    }
+    req.merchant = result.rows[0];
+    next();
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Auth error' });
+  }
+};
 
+module.exports = { authMiddleware, adminOnly, merchantOnly, apiKeyAuth };
 const adminOnly = (req, res, next) => {
   if (req.user.role !== 'superadmin') {
     return res.status(403).json({ success: false, message: 'Admin access required' });

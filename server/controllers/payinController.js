@@ -133,5 +133,79 @@ const createPayin = async (req, res) => {
     res.status(500).json({ code: 500, message: 'Server error', error: true, data: {} });
   }
 };
+const submitUTRPayin = async (req, res) => {
+  try {
+    const apiKey = req.headers['api-key'];
+    const { transaction_id, utr } = req.body;
 
+    // Validate
+    if (!apiKey)
+      return res.status(401).json({ code: 401, message: 'api-key header required', error: true, data: {} });
+
+    if (!transaction_id || !utr)
+      return res.status(400).json({ code: 400, message: 'transaction_id and utr are required', error: true, data: {} });
+
+    // Find merchant by api_key
+    const merchantResult = await db.query(`
+      SELECT m.*, u.is_active FROM merchants m
+      JOIN users u ON u.id = m.user_id
+      WHERE m.api_key = $1
+    `, [apiKey]);
+
+    if (merchantResult.rows.length === 0)
+      return res.status(401).json({ code: 401, message: 'Invalid api-key', error: true, data: {} });
+
+    const merchant = merchantResult.rows[0];
+
+    if (!merchant.is_active)
+      return res.status(403).json({ code: 403, message: 'Merchant account is inactive', error: true, data: {} });
+
+    // Update UTR
+    const result = await db.query(`
+      UPDATE payments SET utr=$1, status='utr_submitted', updated_at=NOW()
+      WHERE reference_id=$2 AND merchant_id=$3 AND status='awaiting_transfer'
+      RETURNING *
+    `, [utr, transaction_id, merchant.id]);
+
+    if (result.rows.length === 0)
+      return res.status(404).json({ code: 404, message: 'Transaction not found or already submitted', error: true, data: {} });
+
+    const payment = result.rows[0];
+
+    // Log history
+    await db.query(`
+      INSERT INTO transaction_history (merchant_id, payment_id, event, data)
+      VALUES ($1, $2, 'utr_submitted', $3)
+    `, [merchant.id, payment.id, JSON.stringify({ utr, source: 'api' })]);
+
+    // Submit proof to agent
+    try {
+      const agentResult = await db.query('SELECT * FROM agents WHERE id=$1', [payment.agent_id]);
+      if (agentResult.rows.length > 0) {
+        const agent = agentResult.rows[0];
+        const { getAgentHandler } = require('../agents');
+        const handler = getAgentHandler(agent.api_endpoint);
+        await handler.submitProof(agent, { reference_id: payment.reference_id, utr });
+      }
+    } catch (proofErr) {
+      console.error('Failed to submit proof to agent:', proofErr.message);
+    }
+
+    res.json({
+      code: 200,
+      message: 'UTR submitted successfully',
+      data: {
+        transaction_id: payment.reference_id,
+        utr: payment.utr,
+        status: payment.status
+      }
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ code: 500, message: 'Server error', error: true, data: {} });
+  }
+};
+
+module.exports = { createPayin, submitUTRPayin };
 module.exports = { createPayin };

@@ -75,7 +75,7 @@ CREATE TABLE payments (
   account_number VARCHAR(255),
   account_holder_name VARCHAR(255),
   ifsc VARCHAR(50),
-  upi_id VARCHAR(255),
+  upi_id TEXT,
   qr_code TEXT,
   utr VARCHAR(255),
   webhook_url TEXT,

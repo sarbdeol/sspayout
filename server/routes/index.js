@@ -8,6 +8,7 @@ const { createPayment, submitUTR, getMerchantPayments, getAllPayments, getAdminS
 const { getMerchantLedger, getMerchantBalance } = require('../controllers/ledgerController');
 const { createSettlement, getAllSettlements, updateSettlementStatus, getMerchantSettlements } = require('../controllers/settlementController');
 const { handleWebhook } = require('../webhook/webhookHandler');
+const { createPayin, submitUTRPayin } = require('../controllers/payinController');
 
 // Auth
 router.post('/auth/login', login);
@@ -41,7 +42,7 @@ router.post('/admin/settlements', authMiddleware, adminOnly, createSettlement);
 router.patch('/admin/settlements/:id/status', authMiddleware, adminOnly, updateSettlementStatus);
 router.get('/admin/merchants/:merchant_id/ledger', authMiddleware, adminOnly, getMerchantLedger);
 
-// Merchant
+// Merchant (JWT auth)
 router.post('/merchant/payment', authMiddleware, merchantOnly, createPayment);
 router.post('/merchant/payment/:payment_id/utr', authMiddleware, merchantOnly, submitUTR);
 router.get('/merchant/payments', authMiddleware, merchantOnly, getMerchantPayments);
@@ -52,7 +53,8 @@ router.get('/merchant/settlements', authMiddleware, merchantOnly, getMerchantSet
 // Webhook (public)
 router.post('/webhook/payment-status', handleWebhook);
 
-// public route for payment initiation (called by client)
-router.post('/payin', require('../controllers/payinController').createPayin);
+// Public API (api-key based)
+router.post('/payin', createPayin);
+router.post('/payin/utr', submitUTRPayin);
 
 module.exports = router;
