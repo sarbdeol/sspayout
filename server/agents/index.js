@@ -3,6 +3,7 @@ const getAgentHandler = (apiEndpoint) => {
   
   if (apiEndpoint.includes('bhumipay')) return require('./bhumipay');
   if (apiEndpoint.includes('indupay') || apiEndpoint.includes('bytexhub')) return require('./indopay');
+  if (apiEndpoint.includes('solwio.in') || apiEndpoint.includes('godemo.in')) return require('./solwio');
   
   // Default fallback
   console.log('Unknown agent endpoint, using indopay handler:', apiEndpoint);

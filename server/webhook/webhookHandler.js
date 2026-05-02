@@ -2,21 +2,88 @@ const crypto = require("crypto");
 const db = require("../models/db");
 const { getAgentHandler } = require("../agents");
 
-const handleWebhook = async (req, res) => {
+/**
+ * Detect if this is a Solwio callback by payload shape.
+ * Solwio is the only agent that sends { mid, data, signature } encrypted.
+ */
+const isSolwioCallback = (body) =>
+  !!(body && body.mid && body.data && body.signature);
+
+/**
+ * For Solwio: find the agent by mid, decrypt data, verify signature,
+ * and attach the decrypted object to body._decrypted so parseWebhook can read it.
+ * Returns the matched agent row, or throws on any failure.
+ */
+const handleSolwioPreprocessing = async (body) => {
+  // Look up the Solwio agent by matching mid in payload_structure JSONB
+  const agentResult = await db.query(
+    `SELECT * FROM agents
+     WHERE payload_structure->>'mid' = $1
+       AND (api_endpoint LIKE '%solwio.in%' OR api_endpoint LIKE '%godemo.in%')
+     LIMIT 1`,
+    [body.mid]
+  );
+
+  if (agentResult.rows.length === 0) {
+    throw new Error(`Solwio agent not found for mid=${body.mid}`);
+  }
+
+  const agent = agentResult.rows[0];
+  const solwio = require("../agents/solwio");
+
+  // Decrypt
+  let decrypted;
   try {
-    // Get agent handler to parse webhook based on agent type
-    // First try to find payment using all possible reference_id formats
+    const plaintext = solwio._decryptPayload(body.data, agent.api_key);
+    decrypted = JSON.parse(plaintext);
+  } catch (err) {
+    throw new Error(`Solwio decryption failed: ${err.message}`);
+  }
+
+  // Verify CRC32 signature: mid + txnId + orderNo + txnStatus
+  const checksumStr = `${decrypted.mid}${decrypted.txnId}${decrypted.orderNo}${decrypted.txnStatus}`;
+  const expectedSig = solwio._crc32(checksumStr);
+  if (String(body.signature) !== expectedSig) {
+    throw new Error(
+      `Solwio signature mismatch: expected ${expectedSig}, got ${body.signature}`
+    );
+  }
+
+  // Attach decrypted payload so parseWebhook can use it
+  body._decrypted = decrypted;
+  return agent;
+};
+
+const handleWebhook = async (req, res) => {
+  // Track whether this is a Solwio callback so we can format the response correctly
+  const solwioCallback = isSolwioCallback(req.body);
+
+  try {
+    // ---------- Solwio: decrypt + verify signature BEFORE finding payment ----------
+    if (solwioCallback) {
+      try {
+        await handleSolwioPreprocessing(req.body);
+      } catch (err) {
+        console.error("Solwio webhook preprocessing failed:", err.message);
+        // Solwio expects { status: "207" } for rejected
+        return res.status(400).json({ status: "207" });
+      }
+    }
+
+    // ---------- Find the reference_id (works for all agents now) ----------
     const possibleRef =
+      req.body._decrypted?.txnId ||                            // Solwio (decrypted)
       req.body.reference_id ||
       req.body.transactionId ||
       req.body.transaction_details?.transaction_id ||
       req.body.order_id;
 
-    if (!possibleRef)
-      return res.status(400).json({
-        success: false,
-        message: "reference_id or transactionId required",
-      });
+    if (!possibleRef) {
+      const errorBody = solwioCallback
+        ? { status: "207" }
+        : { success: false, message: "reference_id or transactionId required" };
+      return res.status(400).json(errorBody);
+    }
 
     // Find payment
     const paymentResult = await db.query(
@@ -25,13 +92,15 @@ const handleWebhook = async (req, res) => {
        JOIN agents a ON a.id = p.agent_id
        JOIN merchants m ON m.id = p.merchant_id
        WHERE p.reference_id=$1`,
-      [possibleRef],
+      [possibleRef]
     );
 
-    if (paymentResult.rows.length === 0)
-      return res
-        .status(404)
-        .json({ success: false, message: "Payment not found" });
+    if (paymentResult.rows.length === 0) {
+      const errorBody = solwioCallback
+        ? { status: "207" }
+        : { success: false, message: "Payment not found" };
+      return res.status(404).json(errorBody);
+    }
 
     const payment = paymentResult.rows[0];
 
@@ -41,23 +110,31 @@ const handleWebhook = async (req, res) => {
     // Parse webhook using agent-specific handler
     const { reference_id, status, utr } = handler.parseWebhook(req.body);
 
-    // Validate webhook signature
-    const signature = req.headers["x-webhook-signature"];
-    if (signature && payment.webhook_secret) {
-      const expectedSig = crypto
-        .createHmac("sha256", payment.webhook_secret)
-        .update(JSON.stringify(req.body))
-        .digest("hex");
-      if (signature !== expectedSig) {
-        return res
-          .status(401)
-          .json({ success: false, message: "Invalid signature" });
+    // ---------- Validate non-Solwio webhook signature (existing logic) ----------
+    // For Solwio, signature was already verified above via CRC32. Skip the HMAC check.
+    if (!solwioCallback) {
+      const signature = req.headers["x-webhook-signature"];
+      if (signature && payment.webhook_secret) {
+        const expectedSig = crypto
+          .createHmac("sha256", payment.webhook_secret)
+          .update(JSON.stringify(req.body))
+          .digest("hex");
+        if (signature !== expectedSig) {
+          return res
+            .status(401)
+            .json({ success: false, message: "Invalid signature" });
+        }
       }
     }
 
     // Prevent duplicate processing
-    if (payment.status === "confirmed")
-      return res.json({ success: true, message: "Already confirmed" });
+    if (payment.status === "confirmed") {
+      return res.json(
+        solwioCallback
+          ? { status: "206" } // Solwio: payment accepted (already)
+          : { success: true, message: "Already confirmed" }
+      );
+    }
 
     // Use agent-specific status check
     const isConfirmed = handler.isConfirmed(status);
@@ -69,7 +146,7 @@ const handleWebhook = async (req, res) => {
         : "utr_submitted";
 
     console.log(
-      `📨 Webhook received: ref=${possibleRef} status=${status} → ${newStatus}`,
+      `📨 Webhook received: ref=${possibleRef} status=${status} → ${newStatus}`
     );
 
     const client = await db.connect();
@@ -78,14 +155,14 @@ const handleWebhook = async (req, res) => {
 
       await client.query(
         `UPDATE payments SET status=$1, utr=COALESCE($2, utr), updated_at=NOW() WHERE id=$3`,
-        [newStatus, utr, payment.id],
+        [newStatus, utr, payment.id]
       );
 
       if (isConfirmed) {
         const balanceResult = await client.query(
           `SELECT COALESCE(balance, 0) as balance FROM ledger
            WHERE merchant_id=$1 ORDER BY created_at DESC LIMIT 1`,
-          [payment.merchant_id],
+          [payment.merchant_id]
         );
         const currentBalance = parseFloat(balanceResult.rows[0]?.balance || 0);
         const newBalance =
@@ -99,7 +176,7 @@ const handleWebhook = async (req, res) => {
             payment.id,
             payment.merchant_credit_amount,
             newBalance,
-          ],
+          ]
         );
 
         await client.query(
@@ -110,7 +187,7 @@ const handleWebhook = async (req, res) => {
             payment.id,
             payment.platform_fee_amount,
             newBalance,
-          ],
+          ]
         );
       }
 
@@ -121,7 +198,7 @@ const handleWebhook = async (req, res) => {
           payment.merchant_id,
           payment.id,
           JSON.stringify({ status, utr, new_status: newStatus }),
-        ],
+        ]
       );
 
       await client.query("COMMIT");
@@ -140,6 +217,13 @@ const handleWebhook = async (req, res) => {
         }
       }
 
+      // ---------- Respond in agent-specific format ----------
+      if (solwioCallback) {
+        // Solwio expects: 205=ack only, 206=accepted, 207=rejected
+        const solwioStatus = isConfirmed ? "206" : isFailed ? "207" : "205";
+        return res.json({ status: solwioStatus });
+      }
+
       res.json({
         success: true,
         message: "Webhook processed",
@@ -153,9 +237,10 @@ const handleWebhook = async (req, res) => {
     }
   } catch (err) {
     console.error("Webhook error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Webhook processing failed" });
+    const errorBody = solwioCallback
+      ? { status: "207" }
+      : { success: false, message: "Webhook processing failed" };
+    res.status(500).json(errorBody);
   }
 };
 
