@@ -133,6 +133,7 @@ const createPayin = async (req, res) => {
     res.status(500).json({ code: 500, message: 'Server error', error: true, data: {} });
   }
 };
+
 const submitUTRPayin = async (req, res) => {
   try {
     const apiKey = req.headers['api-key'];
@@ -208,4 +209,3 @@ const submitUTRPayin = async (req, res) => {
 };
 
 module.exports = { createPayin, submitUTRPayin };
-module.exports = { createPayin };
