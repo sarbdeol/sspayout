@@ -131,7 +131,7 @@ const handleWebhook = async (req, res) => {
     if (payment.status === "confirmed") {
       return res.json(
         solwioCallback
-          ? { status: "206" } // Solwio: payment accepted (already)
+          ? { status: "205" } // Solwio: success ack (already confirmed)
           : { success: true, message: "Already confirmed" }
       );
     }
@@ -219,8 +219,9 @@ const handleWebhook = async (req, res) => {
 
       // ---------- Respond in agent-specific format ----------
       if (solwioCallback) {
-        // Solwio expects: 205=ack only, 206=accepted, 207=rejected
-        const solwioStatus = isConfirmed ? "206" : isFailed ? "207" : "205";
+        // Solwio: 205 = success acknowledgement, 207 = rejected/failed
+        const solwioStatus = isFailed ? "207" : "205";
+        console.log(`📤 Solwio response: { status: "${solwioStatus}" } for ref=${possibleRef}`);
         return res.json({ status: solwioStatus });
       }
 
