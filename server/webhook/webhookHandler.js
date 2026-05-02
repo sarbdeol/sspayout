@@ -254,8 +254,18 @@ const handleWebhook = async (req, res) => {
 
       // ---------- Respond in agent-specific format ----------
       if (solwioCallback) {
-        // Solwio: 205 = success acknowledgement, 207 = rejected/failed
-        const solwioStatus = isFailed ? "207" : "205";
+        // Solwio response codes:
+        //   205 = success acknowledgement (no warning)
+        //   206 = warning -> accepted by merchant (fraud ack: accepted)
+        //   207 = warning -> rejected by merchant (fraud ack: rejected)
+        // We treat both "success" and "warning" as confirmed (custRefNo means bank moved money),
+        // so we send 206 for warning-confirmed payments and 205 for clean success.
+        const incomingStatus = req.body._decrypted?.txnStatus;
+        const isWarning = String(incomingStatus).toLowerCase() === "warning";
+        let solwioStatus;
+        if (isFailed) solwioStatus = "207";
+        else if (isWarning) solwioStatus = "206";  // accept the warning payment
+        else solwioStatus = "205";                  // clean success ack
         return respond(200, { status: solwioStatus });
       }
 

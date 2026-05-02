@@ -175,10 +175,10 @@ const parseWebhook = (body) => {
 };
 
 const isConfirmed = (status) =>
-  ['success', 'SUCCESS'].includes(status);
+  ['success', 'SUCCESS', 'warning', 'WARNING'].includes(status);
 
 const isFailed = (status) =>
-  ['failed', 'FAILED', 'failure', 'FAILURE', 'declined', 'DECLINED'].includes(status);
+  ['failed', 'FAILED', 'failure', 'FAILURE', 'declined', 'DECLINED', 'rejected', 'REJECTED'].includes(status);
 
 // ---------- Exported helpers (used by webhookHandler) ----------
 
