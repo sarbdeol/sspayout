@@ -1,13 +1,18 @@
 const db = require('../models/db');
-const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
+const { getAgentHandler } = require('../agents');
 
+/**
+ * POST /api/payin
+ * Public merchant API - create a new payin transaction.
+ * Auth: api-key header (merchant's api_key).
+ * Routes through the active agent handler so it works for any agent (BytexHub, BhumiPay, Solwio, HandyPay, etc).
+ */
 const createPayin = async (req, res) => {
   try {
     const apiKey = req.headers['api-key'];
-    const { amount, webhook_url } = req.body;
+    const { amount, webhook_url, name, mobile, email, order_id: clientOrderId } = req.body;
 
-    // Validate api-key
     if (!apiKey)
       return res.status(401).json({ code: 401, message: 'api-key header required', error: true, data: {} });
 
@@ -51,43 +56,46 @@ const createPayin = async (req, res) => {
     const platformFeeAmount = (amount * platformFeePercent) / 100;
     const merchantCreditAmount = amount - feeAmount;
 
-    const order_id = `ORD-${Date.now()}`;
+    // Use merchant-provided order_id if given (for idempotency), otherwise generate
+    const order_id = clientOrderId || `ORD-${Date.now()}`;
     let reference_id = `PAY-${uuidv4().split('-')[0].toUpperCase()}-${Date.now()}`;
     const expires_at = new Date(Date.now() + 30 * 60 * 1000);
 
-    // Call BytexHub
-    let bankDetails = { bank_name: null, account_number: null, ifsc: null, upi_id: null, qr_code: null, account_holder_name: null };
+    // ---------- Call agent via handler system (works for any agent) ----------
+    let bankDetails = {
+      bank_name: null,
+      account_number: null,
+      ifsc: null,
+      upi_id: null,
+      qr_code: null,
+      account_holder_name: null,
+    };
+
     try {
-      const agentResponse = await axios.post(agent.api_endpoint, {
-        amount: String(amount),
-        webhook_url: 'https://ss.sspay.online/api/webhook/payment-status'
-      }, {
-        headers: { 'api-key': agent.api_key, 'Content-Type': 'application/json' },
-        timeout: 10000
+      const handler = getAgentHandler(agent.api_endpoint);
+      const result = await handler.createPayment(agent, {
+        amount,
+        order_id,
+        reference_id,
+        customer: {
+          name: name || 'Customer',
+          mobile: mobile || '9999999999',
+          email: email || 'customer@example.com',
+        },
       });
-
-      if (!agentResponse.data || agentResponse.data.code !== 200) {
-        return res.status(400).json({ code: 400, message: agentResponse.data?.message || 'Payment gateway error', error: true, data: {} });
-      }
-
-      const d = agentResponse.data.data;
-      bankDetails = {
-        bank_name: d.bank_name,
-        account_number: d.account_number,
-        ifsc: d.ifsc_code,
-        upi_id: d.upi_id || null,
-        qr_code: d.qrCode || null,
-        account_holder_name: d.account_holder_name || null,
-      };
-      if (d.transaction_id) reference_id = d.transaction_id;
-
+      bankDetails = result;
+      if (result.reference_id) reference_id = result.reference_id;
     } catch (agentErr) {
+      console.error('Agent API error:', agentErr.message);
       if (agentErr.response) {
-        console.error('Agent error:', JSON.stringify(agentErr.response.data));
-      } else {
-        console.error('Agent error:', agentErr.message);
+        console.error('Agent API error body:', JSON.stringify(agentErr.response.data));
       }
-      return res.status(400).json({ code: 400, message: agentErr.response?.data?.message || 'Payment gateway unavailable', error: true, data: {} });
+      return res.status(400).json({
+        code: 400,
+        message: agentErr.response?.data?.message || agentErr.message || 'Payment gateway unavailable',
+        error: true,
+        data: {},
+      });
     }
 
     // Save payment
@@ -104,15 +112,15 @@ const createPayin = async (req, res) => {
       bankDetails.upi_id, bankDetails.qr_code, bankDetails.account_holder_name,
       webhook_url || null,
       merchantCommission, agentCommission, platformFeeAmount, merchantCreditAmount,
-      agentFeeAmount, expires_at
+      agentFeeAmount, expires_at,
     ]);
 
     await db.query(`
       INSERT INTO transaction_history (merchant_id, payment_id, event, data)
       VALUES ($1, $2, 'payment_created', $3)
-    `, [merchant.id, paymentResult.rows[0].id, JSON.stringify({ amount, order_id, source: 'api' })]);
+    `, [merchant.id, paymentResult.rows[0].id, JSON.stringify({ amount, order_id, source: 'api', agent_id: agent.id })]);
 
-    // Return in BytexHub format
+    // Return unified response (works for all agents - some fields will be null depending on agent type)
     res.json({
       code: 200,
       message: 'Payment Created Successfully',
@@ -124,29 +132,32 @@ const createPayin = async (req, res) => {
         upi_id: bankDetails.upi_id,
         qr_code: bankDetails.qr_code,
         transaction_id: reference_id,
-        expires_at: expires_at
-      }
+        order_id,
+        expires_at,
+      },
     });
-
   } catch (err) {
-    console.error(err);
+    console.error('createPayin error:', err);
     res.status(500).json({ code: 500, message: 'Server error', error: true, data: {} });
   }
 };
 
+/**
+ * POST /api/payin/utr
+ * Submit UTR for a bank-transfer payment (mainly used for BytexHub).
+ * No-op for UPI agents (BhumiPay/Solwio/HandyPay) which auto-confirm via callback.
+ */
 const submitUTRPayin = async (req, res) => {
   try {
     const apiKey = req.headers['api-key'];
     const { transaction_id, utr } = req.body;
 
-    // Validate
     if (!apiKey)
       return res.status(401).json({ code: 401, message: 'api-key header required', error: true, data: {} });
 
     if (!transaction_id || !utr)
       return res.status(400).json({ code: 400, message: 'transaction_id and utr are required', error: true, data: {} });
 
-    // Find merchant by api_key
     const merchantResult = await db.query(`
       SELECT m.*, u.is_active FROM merchants m
       JOIN users u ON u.id = m.user_id
@@ -161,7 +172,6 @@ const submitUTRPayin = async (req, res) => {
     if (!merchant.is_active)
       return res.status(403).json({ code: 403, message: 'Merchant account is inactive', error: true, data: {} });
 
-    // Update UTR
     const result = await db.query(`
       UPDATE payments SET utr=$1, status='utr_submitted', updated_at=NOW()
       WHERE reference_id=$2 AND merchant_id=$3 AND status='awaiting_transfer'
@@ -173,18 +183,16 @@ const submitUTRPayin = async (req, res) => {
 
     const payment = result.rows[0];
 
-    // Log history
     await db.query(`
       INSERT INTO transaction_history (merchant_id, payment_id, event, data)
       VALUES ($1, $2, 'utr_submitted', $3)
     `, [merchant.id, payment.id, JSON.stringify({ utr, source: 'api' })]);
 
-    // Submit proof to agent
+    // Submit proof to agent (no-op for UPI agents)
     try {
       const agentResult = await db.query('SELECT * FROM agents WHERE id=$1', [payment.agent_id]);
       if (agentResult.rows.length > 0) {
         const agent = agentResult.rows[0];
-        const { getAgentHandler } = require('../agents');
         const handler = getAgentHandler(agent.api_endpoint);
         await handler.submitProof(agent, { reference_id: payment.reference_id, utr });
       }
@@ -198,14 +206,94 @@ const submitUTRPayin = async (req, res) => {
       data: {
         transaction_id: payment.reference_id,
         utr: payment.utr,
-        status: payment.status
-      }
+        status: payment.status,
+      },
     });
-
   } catch (err) {
-    console.error(err);
+    console.error('submitUTRPayin error:', err);
     res.status(500).json({ code: 500, message: 'Server error', error: true, data: {} });
   }
 };
 
-module.exports = { createPayin, submitUTRPayin };
+/**
+ * GET /api/payin/status/:transaction_id
+ * Public merchant API - check status of a payment.
+ * Reads from DB; if status is non-terminal AND agent supports live status check, falls back to live API.
+ */
+const getPayinStatus = async (req, res) => {
+  try {
+    const apiKey = req.headers['api-key'];
+    const { transaction_id } = req.params;
+
+    if (!apiKey)
+      return res.status(401).json({ code: 401, message: 'api-key header required', error: true, data: {} });
+
+    if (!transaction_id)
+      return res.status(400).json({ code: 400, message: 'transaction_id is required', error: true, data: {} });
+
+    const merchantResult = await db.query(
+      'SELECT m.*, u.is_active FROM merchants m JOIN users u ON u.id = m.user_id WHERE m.api_key = $1',
+      [apiKey]
+    );
+
+    if (merchantResult.rows.length === 0)
+      return res.status(401).json({ code: 401, message: 'Invalid api-key', error: true, data: {} });
+
+    const merchant = merchantResult.rows[0];
+
+    // Look up payment by reference_id or order_id (whichever the merchant has)
+    const paymentResult = await db.query(`
+      SELECT p.*, a.api_endpoint FROM payments p
+      LEFT JOIN agents a ON a.id = p.agent_id
+      WHERE (p.reference_id=$1 OR p.order_id=$1) AND p.merchant_id=$2
+      LIMIT 1
+    `, [transaction_id, merchant.id]);
+
+    if (paymentResult.rows.length === 0)
+      return res.status(404).json({ code: 404, message: 'Transaction not found', error: true, data: {} });
+
+    const payment = paymentResult.rows[0];
+
+    // If status is non-terminal AND agent supports live status check, also fetch live status
+    const isTerminal = ['confirmed', 'failed', 'expired'].includes(payment.status);
+    let liveCheck = null;
+
+    if (!isTerminal && payment.api_endpoint) {
+      try {
+        const handler = getAgentHandler(payment.api_endpoint);
+        if (typeof handler.checkStatus === 'function') {
+          const agentResult = await db.query('SELECT * FROM agents WHERE id=$1', [payment.agent_id]);
+          const agent = agentResult.rows[0];
+          liveCheck = await handler.checkStatus(agent, {
+            merchant_order_id: payment.order_id,
+            reference_id: payment.reference_id,
+          });
+          console.log(`📡 Live status check for ${transaction_id}:`, liveCheck?.transaction_status || liveCheck?.status || 'no data');
+        }
+      } catch (liveErr) {
+        console.error('Live status check failed:', liveErr.message);
+        // Fall through to DB-only response
+      }
+    }
+
+    res.json({
+      code: 200,
+      message: 'OK',
+      data: {
+        transaction_id: payment.reference_id,
+        order_id: payment.order_id,
+        amount: payment.amount,
+        status: payment.status,
+        utr: payment.utr,
+        created_at: payment.created_at,
+        updated_at: payment.updated_at,
+        ...(liveCheck && { live_check: liveCheck }),
+      },
+    });
+  } catch (err) {
+    console.error('getPayinStatus error:', err);
+    res.status(500).json({ code: 500, message: 'Server error', error: true, data: {} });
+  }
+};
+
+module.exports = { createPayin, submitUTRPayin, getPayinStatus };

@@ -8,7 +8,7 @@ const { createPayment, submitUTR, getMerchantPayments, getAllPayments, getAdminS
 const { getMerchantLedger, getMerchantBalance } = require('../controllers/ledgerController');
 const { createSettlement, getAllSettlements, updateSettlementStatus, getMerchantSettlements } = require('../controllers/settlementController');
 const { handleWebhook } = require('../webhook/webhookHandler');
-const { createPayin, submitUTRPayin } = require('../controllers/payinController');
+const { createPayin, submitUTRPayin, getPayinStatus } = require('../controllers/payinController');
 
 // Auth
 router.post('/auth/login', login);
@@ -56,5 +56,6 @@ router.post('/webhook/payment-status', handleWebhook);
 // Public API (api-key based)
 router.post('/payin', createPayin);
 router.post('/payin/utr', submitUTRPayin);
+router.get('/payin/status/:transaction_id', getPayinStatus);
 
 module.exports = router;
