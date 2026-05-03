@@ -55,28 +55,53 @@ const createMerchant = async (req, res) => {
   }
 };
 
+/**
+ * IMPORTANT: This query previously LEFT JOINed merchant_agents AND ledger together,
+ * which caused a Cartesian explosion. If a merchant had 1 agent and 10 ledger rows,
+ * the json_agg(agents) ran 10 times and the agents array contained 10 duplicates.
+ *
+ * Fix: aggregate agents and ledger totals in independent subqueries so they
+ * don't multiply each other.
+ */
 const getAllMerchants = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT m.*, u.name, u.email, u.username, u.is_active, m.plain_password,
-        COALESCE(
-          json_agg(
-            json_build_object('id', a.id, 'agent_name', a.agent_name, 'is_primary', ma.is_primary)
-          ) FILTER (WHERE a.id IS NOT NULL), '[]'
-        ) as agents,
-        COALESCE(SUM(CASE WHEN l.type='credit' THEN l.amount ELSE 0 END), 0) as total_credited,
-        COALESCE(SUM(CASE WHEN l.type='settlement' THEN l.amount ELSE 0 END), 0) as total_settled
+      SELECT
+        m.*,
+        u.name, u.email, u.username, u.is_active,
+        m.plain_password,
+        COALESCE(agents_sub.agents, '[]'::json) as agents,
+        COALESCE(ledger_sub.total_credited, 0) as total_credited,
+        COALESCE(ledger_sub.total_settled, 0) as total_settled
       FROM merchants m
       JOIN users u ON u.id = m.user_id
-      LEFT JOIN merchant_agents ma ON ma.merchant_id = m.id
-      LEFT JOIN agents a ON a.id = ma.agent_id
-      LEFT JOIN ledger l ON l.merchant_id = m.id
-      GROUP BY m.id, u.name, u.email, u.username, u.is_active, m.plain_password
+      LEFT JOIN (
+        SELECT
+          ma.merchant_id,
+          json_agg(
+            json_build_object(
+              'id', a.id,
+              'agent_name', a.agent_name,
+              'is_primary', ma.is_primary
+            )
+          ) as agents
+        FROM merchant_agents ma
+        JOIN agents a ON a.id = ma.agent_id
+        GROUP BY ma.merchant_id
+      ) agents_sub ON agents_sub.merchant_id = m.id
+      LEFT JOIN (
+        SELECT
+          merchant_id,
+          SUM(CASE WHEN type='credit' THEN amount ELSE 0 END) as total_credited,
+          SUM(CASE WHEN type='settlement' THEN amount ELSE 0 END) as total_settled
+        FROM ledger
+        GROUP BY merchant_id
+      ) ledger_sub ON ledger_sub.merchant_id = m.id
       ORDER BY m.created_at DESC
     `);
     res.json({ success: true, merchants: result.rows });
   } catch (err) {
-    console.error(err);
+    console.error('getAllMerchants error:', err);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };
@@ -92,9 +117,9 @@ const getMerchant = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Merchant not found' });
 
     const agents = await db.query(`
-      SELECT a.id, a.agent_name, a.commission_rate, ma.is_primary
+      SELECT a.id, a.agent_name, ma.is_primary
       FROM merchant_agents ma JOIN agents a ON a.id = ma.agent_id
-      WHERE ma.merchant_id = $1
+      WHERE ma.merchant_id=$1
     `, [req.params.id]);
 
     res.json({ success: true, merchant: { ...result.rows[0], agents: agents.rows } });
