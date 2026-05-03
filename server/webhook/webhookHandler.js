@@ -58,11 +58,19 @@ const handleWebhook = async (req, res) => {
   // Track whether this is a Solwio callback so we can format the response correctly
   const solwioCallback = isSolwioCallback(req.body);
 
+  // Detect HandyPay: { status, transaction_details: { merchant_order_id, ... } }
+  const handypayCallback = !!(
+    req.body &&
+    req.body.transaction_details &&
+    req.body.transaction_details.merchant_order_id
+  );
+
   // Generate a short request id for correlating logs of this webhook
   const reqId = Math.random().toString(36).substring(2, 8);
 
   // ---------- Log incoming webhook ----------
   const agentType = solwioCallback ? "SOLWIO"
+    : handypayCallback ? "HANDYPAY"
     : req.body.transaction_details ? "BHUMIPAY"
     : (req.body.reference_id || req.body.transactionId) ? "INDOPAY"
     : "UNKNOWN";
@@ -100,9 +108,10 @@ const handleWebhook = async (req, res) => {
     // ---------- Find the reference_id (works for all agents now) ----------
     const possibleRef =
       req.body._decrypted?.txnId ||                            // Solwio (decrypted)
+      req.body.transaction_details?.merchant_order_id ||       // HandyPay
       req.body.reference_id ||
       req.body.transactionId ||
-      req.body.transaction_details?.transaction_id ||
+      req.body.transaction_details?.transaction_id ||          // BhumiPay
       req.body.order_id;
 
     console.log(`[${reqId}] Looking up payment by reference: ${possibleRef}`);
