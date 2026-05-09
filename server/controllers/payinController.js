@@ -219,6 +219,7 @@ const submitUTRPayin = async (req, res) => {
  * GET /api/payin/status/:transaction_id
  * Public merchant API - check status of a payment.
  * Reads from DB; if status is non-terminal AND agent supports live status check, falls back to live API.
+ * If live check shows a terminal state, DB is reconciled (self-heals missed webhooks).
  */
 const getPayinStatus = async (req, res) => {
   try {
@@ -269,6 +270,52 @@ const getPayinStatus = async (req, res) => {
             reference_id: payment.reference_id,
           });
           console.log(`📡 Live status check for ${transaction_id}:`, liveCheck?.transaction_status || liveCheck?.status || 'no data');
+
+          // ---------- Self-heal: reconcile DB if webhook was missed ----------
+          if (liveCheck) {
+            const liveStatusRaw = liveCheck.transaction_status || liveCheck.status;
+
+            if (handler.isConfirmed && handler.isConfirmed(liveStatusRaw)) {
+              // Live shows SUCCESS but DB is still pending → webhook missed, reconcile
+              const updateResult = await db.query(`
+                UPDATE payments
+                SET status='confirmed', utr=COALESCE($1, utr), updated_at=NOW()
+                WHERE id=$2 AND status NOT IN ('confirmed','failed','expired')
+                RETURNING *
+              `, [liveCheck.utr || null, payment.id]);
+
+              if (updateResult.rows.length > 0) {
+                console.log(`✅ Reconciled payment ${payment.reference_id} from status check (was: ${payment.status})`);
+                await db.query(`
+                  INSERT INTO transaction_history (merchant_id, payment_id, event, data)
+                  VALUES ($1, $2, 'reconciled_via_status_check', $3)
+                `, [merchant.id, payment.id, JSON.stringify({ previous_status: payment.status, live_check: liveCheck })]);
+
+                payment.status = 'confirmed';
+                if (liveCheck.utr) payment.utr = liveCheck.utr;
+                payment.updated_at = updateResult.rows[0].updated_at;
+              }
+            } else if (handler.isFailed && handler.isFailed(liveStatusRaw)) {
+              // Live shows FAILED but DB is still pending → reconcile to failed
+              const updateResult = await db.query(`
+                UPDATE payments
+                SET status='failed', updated_at=NOW()
+                WHERE id=$1 AND status NOT IN ('confirmed','failed','expired')
+                RETURNING *
+              `, [payment.id]);
+
+              if (updateResult.rows.length > 0) {
+                console.log(`❌ Reconciled payment ${payment.reference_id} to failed from status check (was: ${payment.status})`);
+                await db.query(`
+                  INSERT INTO transaction_history (merchant_id, payment_id, event, data)
+                  VALUES ($1, $2, 'reconciled_via_status_check', $3)
+                `, [merchant.id, payment.id, JSON.stringify({ previous_status: payment.status, live_check: liveCheck })]);
+
+                payment.status = 'failed';
+                payment.updated_at = updateResult.rows[0].updated_at;
+              }
+            }
+          }
         }
       } catch (liveErr) {
         console.error('Live status check failed:', liveErr.message);

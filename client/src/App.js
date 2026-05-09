@@ -13,6 +13,8 @@ import MerchantPayments from './pages/merchant/Payments';
 import MerchantLedger from './pages/merchant/Ledger';
 import MerchantSettlements from './pages/merchant/Settlements';
 import './index.css';
+import ApiDocs from './pages/merchant/ApiDocs';
+
 
 function ProtectedLayout({ children, role }) {
   const { user, loading } = useAuth();
@@ -54,6 +56,7 @@ export default function App() {
           <Route path="/merchant/payments" element={<ProtectedLayout role="merchant"><MerchantPayments /></ProtectedLayout>} />
           <Route path="/merchant/ledger" element={<ProtectedLayout role="merchant"><MerchantLedger /></ProtectedLayout>} />
           <Route path="/merchant/settlements" element={<ProtectedLayout role="merchant"><MerchantSettlements /></ProtectedLayout>} />
+          <Route path="/merchant/api-docs" element={<ProtectedLayout role="merchant"><ApiDocs /></ProtectedLayout>} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>
