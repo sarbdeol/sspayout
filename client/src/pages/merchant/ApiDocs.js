@@ -410,15 +410,20 @@ const ApiDocs = () => {
 
         <Section id="create" title="Create Payment">
           <EndpointBadge method="POST" path="/api/payin" />
+
+          <div style={styles.note('warning')}>
+            <strong>Customer details are required.</strong> You must collect <code style={styles.inlineCode}>name</code>, <code style={styles.inlineCode}>mobile</code>, and <code style={styles.inlineCode}>email</code> from the customer at checkout. Requests with missing or invalid customer data will be rejected with HTTP 400.
+          </div>
+
           <h4 style={styles.h4}>Request Body</h4>
           <ParamTable
             rows={[
               { name: 'amount', type: 'number', required: true, desc: 'Payment amount in INR' },
+              { name: 'name', type: 'string', required: true, desc: 'Customer name (2–100 characters)' },
+              { name: 'mobile', type: 'string', required: true, desc: '10-digit Indian mobile (must start with 6, 7, 8, or 9)' },
+              { name: 'email', type: 'string', required: true, desc: 'Valid email address (no example.com / test domains)' },
               { name: 'order_id', type: 'string', required: false, desc: 'Your unique order reference (auto-generated if omitted)' },
               { name: 'webhook_url', type: 'string', required: false, desc: 'URL to receive payment confirmation' },
-              { name: 'name', type: 'string', required: false, desc: 'Customer name' },
-              { name: 'mobile', type: 'string', required: false, desc: 'Customer mobile (10-digit Indian)' },
-              { name: 'email', type: 'string', required: false, desc: 'Customer email (real domain — no example.com)' },
             ]}
           />
           <h4 style={styles.h4}>cURL</h4>
@@ -428,11 +433,11 @@ const ApiDocs = () => {
   -H "Content-Type: application/json" \\
   -d '{
     "amount": 1000,
-    "order_id": "ORD-12345",
-    "webhook_url": "https://yoursite.com/webhook",
     "name": "Rahul Kumar",
     "mobile": "9876543210",
-    "email": "rahul@yoursite.com"
+    "email": "rahul@yoursite.com",
+    "order_id": "ORD-12345",
+    "webhook_url": "https://yoursite.com/webhook"
   }'`}
             fieldId="create-curl"
             copy={copy}
@@ -459,6 +464,26 @@ const ApiDocs = () => {
             copy={copy}
             copiedField={copiedField}
           />
+
+          <h4 style={styles.h4}>Validation Error Response</h4>
+          <CodeBlock
+            code={`{
+  "code": 400,
+  "message": "Invalid customer details",
+  "error": true,
+  "data": {
+    "errors": [
+      "name is required",
+      "mobile must be a valid 10-digit Indian number (starts with 6-9, not all same digit)",
+      "email must be a valid email address (no example.com / test domains)"
+    ]
+  }
+}`}
+            fieldId="create-error"
+            copy={copy}
+            copiedField={copiedField}
+          />
+
           <div style={styles.note('info')}>
             <strong>Save the <code style={styles.inlineCode}>transaction_id</code></strong> — you'll need it to check status or reconcile later. Payments expire 30 minutes after creation.
           </div>
@@ -583,7 +608,7 @@ const ApiDocs = () => {
             hideRequired
             rows={[
               { name: '200', type: 'OK', desc: 'Success' },
-              { name: '400', type: 'Bad Request', desc: 'Invalid amount, missing fields, or no agent available' },
+              { name: '400', type: 'Bad Request', desc: 'Invalid amount, missing/invalid customer fields, or no agent available' },
               { name: '401', type: 'Unauthorized', desc: 'Missing or invalid api-key' },
               { name: '403', type: 'Forbidden', desc: 'Merchant account is inactive' },
               { name: '404', type: 'Not Found', desc: 'Transaction not found for this merchant' },

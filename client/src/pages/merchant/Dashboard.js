@@ -7,6 +7,24 @@ import StatusBadge, {
   formatDate,
 } from "../../components/shared/StatusBadge";
 
+// ============================================================
+// Customer field validators (mirror server-side rules)
+// ============================================================
+const isValidIndianMobile = (m) => {
+  if (!m) return false;
+  const s = String(m).replace(/\D/g, '');
+  if (s.length !== 10) return false;
+  if (!/^[6-9]/.test(s)) return false;
+  if (/^(\d)\1{9}$/.test(s)) return false;
+  return true;
+};
+const isValidEmail = (e) => {
+  if (!e) return false;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return false;
+  const blocked = ['example.com', 'example.org', 'example.net', 'test.com', 'localhost'];
+  return !blocked.includes(e.split('@')[1].toLowerCase());
+};
+
 export default function MerchantDashboard() {
   const { user } = useAuth();
   const [balance, setBalance] = useState(0);
@@ -15,7 +33,7 @@ export default function MerchantDashboard() {
   const [createModal, setCreateModal] = useState(false);
   const [utrModal, setUtrModal] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState(null);
-  const [form, setForm] = useState({ amount: "" });
+  const [form, setForm] = useState({ amount: "", name: "", mobile: "", email: "" });
   const [utr, setUtr] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -47,9 +65,27 @@ export default function MerchantDashboard() {
     return () => clearInterval(interval);
   }, []);
 
+  // -------- Validate before submit --------
+  const validateForm = () => {
+    if (!form.amount || Number(form.amount) <= 0) {
+      return "Amount is required";
+    }
+    if (!form.name || form.name.trim().length < 2) {
+      return "Customer name is required (minimum 2 characters)";
+    }
+    if (!isValidIndianMobile(form.mobile)) {
+      return "Mobile must be a valid 10-digit Indian number (starts with 6-9, not all same digit)";
+    }
+    if (!isValidEmail(form.email)) {
+      return "Email must be valid (no example.com or test domains)";
+    }
+    return null;
+  };
+
   const handleCreate = async () => {
-    if (!form.amount) {
-      setError("Amount is required");
+    const validationError = validateForm();
+    if (validationError) {
+      setError(validationError);
       return;
     }
     setError("");
@@ -57,17 +93,26 @@ export default function MerchantDashboard() {
     try {
       const auto_order_id = `ORD-${Date.now()}`;
       const res = await merchantAPI.createPayment({
-        ...form,
+        amount: Number(form.amount),
+        name: form.name.trim(),
+        mobile: String(form.mobile).replace(/\D/g, ''),
+        email: form.email.trim().toLowerCase(),
         order_id: auto_order_id,
       });
       setNewPayment(res.data.payment);
-      setForm({ amount: "" });
+      setForm({ amount: "", name: "", mobile: "", email: "" });
       setCreateModal(false);
       setUtrModal(true);
       setSelectedPayment(res.data.payment);
       load();
     } catch (err) {
-      setError(err.response?.data?.message || "Failed to create payment");
+      // Server-side validation may return data.errors[]
+      const serverErrors = err.response?.data?.data?.errors;
+      if (Array.isArray(serverErrors) && serverErrors.length > 0) {
+        setError(serverErrors.join(' • '));
+      } else {
+        setError(err.response?.data?.message || "Failed to create payment");
+      }
     } finally {
       setSaving(false);
     }
@@ -108,9 +153,7 @@ export default function MerchantDashboard() {
     ["pending", "awaiting_transfer", "utr_submitted"].includes(p.status),
   ).length;
 
-  // Check if payment has bank details or UPI
   const hasPaymentDetails = (p) => p?.bank_name || p?.upi_id || p?.qr_code;
-  // Check if BhumiPay (UPI only payment)
   const isUPIOnly = (p) =>
     p?.bank_name === "UPI Payment" || (!p?.account_number && p?.upi_id);
 
@@ -127,7 +170,7 @@ export default function MerchantDashboard() {
           <button
             className="btn btn-primary"
             onClick={() => {
-              setForm({ amount: "" });
+              setForm({ amount: "", name: "", mobile: "", email: "" });
               setError("");
               setCreateModal(true);
             }}
@@ -363,14 +406,64 @@ export default function MerchantDashboard() {
             </div>
             <div className="modal-body">
               {error && <div className="alert alert-error">{error}</div>}
+
               <div className="form-group">
-                <label className="form-label">Amount (₹)</label>
+                <label className="form-label">Amount (₹) *</label>
                 <input
                   className="form-control"
                   type="number"
                   placeholder="1000.00"
                   value={form.amount}
                   onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Customer Name *</label>
+                <input
+                  className="form-control"
+                  type="text"
+                  placeholder="e.g. Rahul Kumar"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Customer Mobile *</label>
+                <input
+                  className="form-control"
+                  type="tel"
+                  placeholder="9876543210"
+                  maxLength={10}
+                  value={form.mobile}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      mobile: e.target.value.replace(/\D/g, '').slice(0, 10),
+                    })
+                  }
+                  style={{ fontFamily: "DM Mono, monospace" }}
+                />
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "var(--text-muted)",
+                    marginTop: 4,
+                  }}
+                >
+                  10 digits, starts with 6-9
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Customer Email *</label>
+                <input
+                  className="form-control"
+                  type="email"
+                  placeholder="customer@gmail.com"
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
                 />
               </div>
             </div>
@@ -435,7 +528,6 @@ export default function MerchantDashboard() {
                     Transfer To
                   </div>
                   <div style={{ display: "grid", gap: 8, fontSize: 13 }}>
-                    {/* Show bank details only for non-UPI agents */}
                     {!isUPIOnly(selectedPayment) && (
                       <>
                         <div
@@ -493,7 +585,6 @@ export default function MerchantDashboard() {
                       </>
                     )}
 
-                    {/* UPI ID - show as link for UPI intent, text for normal UPI */}
                     {selectedPayment.upi_id && (
                       <div
                         style={{
@@ -543,7 +634,6 @@ export default function MerchantDashboard() {
                     </div>
                   </div>
 
-                  {/* QR Code */}
                   {selectedPayment.qr_code && (
                     <div
                       style={{
@@ -622,7 +712,6 @@ export default function MerchantDashboard() {
               >
                 Close
               </button>
-              {/* Allow submit UTR for both bank and UPI payments */}
               <button
                 className="btn btn-primary"
                 onClick={handleUTR}

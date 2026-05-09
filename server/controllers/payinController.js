@@ -2,12 +2,61 @@ const db = require('../models/db');
 const { v4: uuidv4 } = require('uuid');
 const { getAgentHandler } = require('../agents');
 
+// ============================================================
+// Customer field validators
+// ============================================================
+
+const isValidIndianMobile = (m) => {
+  if (!m) return false;
+  const s = String(m).replace(/\D/g, '');
+  if (s.length !== 10) return false;
+  if (!/^[6-9]/.test(s)) return false;
+  if (/^(\d)\1{9}$/.test(s)) return false; // reject all-same-digit (9999999999, 8888888888)
+  return true;
+};
+
+const isValidEmail = (e) => {
+  if (!e) return false;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return false;
+  const blocked = ['example.com', 'example.org', 'example.net', 'test.com', 'localhost'];
+  const domain = e.split('@')[1].toLowerCase();
+  return !blocked.includes(domain);
+};
+
+const isValidName = (n) => {
+  if (!n) return false;
+  const s = String(n).trim();
+  return s.length >= 2 && s.length <= 100;
+};
+
 /**
- * POST /api/payin
- * Public merchant API - create a new payin transaction.
- * Auth: api-key header (merchant's api_key).
- * Routes through the active agent handler so it works for any agent (BytexHub, BhumiPay, Solwio, HandyPay, etc).
+ * Validate all required customer fields. Returns an array of error messages,
+ * empty if all valid.
  */
+const validateCustomer = ({ name, mobile, email }) => {
+  const errors = [];
+  if (!isValidName(name)) {
+    errors.push(name
+      ? 'name must be 2-100 characters'
+      : 'name is required');
+  }
+  if (!isValidIndianMobile(mobile)) {
+    errors.push(mobile
+      ? 'mobile must be a valid 10-digit Indian number (starts with 6-9, not all same digit)'
+      : 'mobile is required');
+  }
+  if (!isValidEmail(email)) {
+    errors.push(email
+      ? 'email must be a valid email address (no example.com / test domains)'
+      : 'email is required');
+  }
+  return errors;
+};
+
+// ============================================================
+// POST /api/payin — Create payment
+// ============================================================
+
 const createPayin = async (req, res) => {
   try {
     const apiKey = req.headers['api-key'];
@@ -18,6 +67,17 @@ const createPayin = async (req, res) => {
 
     if (!amount)
       return res.status(400).json({ code: 400, message: 'amount is required', error: true, data: {} });
+
+    // -------- Strict customer validation --------
+    const customerErrors = validateCustomer({ name, mobile, email });
+    if (customerErrors.length > 0) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid customer details',
+        error: true,
+        data: { errors: customerErrors },
+      });
+    }
 
     // Find merchant by api_key
     const merchantResult = await db.query(`
@@ -78,9 +138,9 @@ const createPayin = async (req, res) => {
         order_id,
         reference_id,
         customer: {
-          name: name || 'Customer',
-          mobile: mobile || '9999999999',
-          email: email || 'customer@example.com',
+          name: String(name).trim(),
+          mobile: String(mobile).replace(/\D/g, ''),
+          email: String(email).trim().toLowerCase(),
         },
       });
       bankDetails = result;
@@ -120,7 +180,6 @@ const createPayin = async (req, res) => {
       VALUES ($1, $2, 'payment_created', $3)
     `, [merchant.id, paymentResult.rows[0].id, JSON.stringify({ amount, order_id, source: 'api', agent_id: agent.id })]);
 
-    // Return unified response (works for all agents - some fields will be null depending on agent type)
     res.json({
       code: 200,
       message: 'Payment Created Successfully',
@@ -142,11 +201,10 @@ const createPayin = async (req, res) => {
   }
 };
 
-/**
- * POST /api/payin/utr
- * Submit UTR for a bank-transfer payment (mainly used for BytexHub).
- * No-op for UPI agents (BhumiPay/Solwio/HandyPay) which auto-confirm via callback.
- */
+// ============================================================
+// POST /api/payin/utr — Submit UTR (unchanged)
+// ============================================================
+
 const submitUTRPayin = async (req, res) => {
   try {
     const apiKey = req.headers['api-key'];
@@ -188,7 +246,6 @@ const submitUTRPayin = async (req, res) => {
       VALUES ($1, $2, 'utr_submitted', $3)
     `, [merchant.id, payment.id, JSON.stringify({ utr, source: 'api' })]);
 
-    // Submit proof to agent (no-op for UPI agents)
     try {
       const agentResult = await db.query('SELECT * FROM agents WHERE id=$1', [payment.agent_id]);
       if (agentResult.rows.length > 0) {
@@ -215,12 +272,10 @@ const submitUTRPayin = async (req, res) => {
   }
 };
 
-/**
- * GET /api/payin/status/:transaction_id
- * Public merchant API - check status of a payment.
- * Reads from DB; if status is non-terminal AND agent supports live status check, falls back to live API.
- * If live check shows a terminal state, DB is reconciled (self-heals missed webhooks).
- */
+// ============================================================
+// GET /api/payin/status/:transaction_id — Status check (unchanged from your version)
+// ============================================================
+
 const getPayinStatus = async (req, res) => {
   try {
     const apiKey = req.headers['api-key'];
@@ -242,7 +297,6 @@ const getPayinStatus = async (req, res) => {
 
     const merchant = merchantResult.rows[0];
 
-    // Look up payment by reference_id or order_id (whichever the merchant has)
     const paymentResult = await db.query(`
       SELECT p.*, a.api_endpoint FROM payments p
       LEFT JOIN agents a ON a.id = p.agent_id
@@ -254,8 +308,6 @@ const getPayinStatus = async (req, res) => {
       return res.status(404).json({ code: 404, message: 'Transaction not found', error: true, data: {} });
 
     const payment = paymentResult.rows[0];
-
-    // If status is non-terminal AND agent supports live status check, also fetch live status
     const isTerminal = ['confirmed', 'failed', 'expired'].includes(payment.status);
     let liveCheck = null;
 
@@ -271,12 +323,10 @@ const getPayinStatus = async (req, res) => {
           });
           console.log(`📡 Live status check for ${transaction_id}:`, liveCheck?.transaction_status || liveCheck?.status || 'no data');
 
-          // ---------- Self-heal: reconcile DB if webhook was missed ----------
           if (liveCheck) {
             const liveStatusRaw = liveCheck.transaction_status || liveCheck.status;
 
             if (handler.isConfirmed && handler.isConfirmed(liveStatusRaw)) {
-              // Live shows SUCCESS but DB is still pending → webhook missed, reconcile
               const updateResult = await db.query(`
                 UPDATE payments
                 SET status='confirmed', utr=COALESCE($1, utr), updated_at=NOW()
@@ -290,13 +340,11 @@ const getPayinStatus = async (req, res) => {
                   INSERT INTO transaction_history (merchant_id, payment_id, event, data)
                   VALUES ($1, $2, 'reconciled_via_status_check', $3)
                 `, [merchant.id, payment.id, JSON.stringify({ previous_status: payment.status, live_check: liveCheck })]);
-
                 payment.status = 'confirmed';
                 if (liveCheck.utr) payment.utr = liveCheck.utr;
                 payment.updated_at = updateResult.rows[0].updated_at;
               }
             } else if (handler.isFailed && handler.isFailed(liveStatusRaw)) {
-              // Live shows FAILED but DB is still pending → reconcile to failed
               const updateResult = await db.query(`
                 UPDATE payments
                 SET status='failed', updated_at=NOW()
@@ -310,7 +358,6 @@ const getPayinStatus = async (req, res) => {
                   INSERT INTO transaction_history (merchant_id, payment_id, event, data)
                   VALUES ($1, $2, 'reconciled_via_status_check', $3)
                 `, [merchant.id, payment.id, JSON.stringify({ previous_status: payment.status, live_check: liveCheck })]);
-
                 payment.status = 'failed';
                 payment.updated_at = updateResult.rows[0].updated_at;
               }
@@ -319,7 +366,6 @@ const getPayinStatus = async (req, res) => {
         }
       } catch (liveErr) {
         console.error('Live status check failed:', liveErr.message);
-        // Fall through to DB-only response
       }
     }
 

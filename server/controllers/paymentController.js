@@ -3,17 +3,70 @@ const { v4: uuidv4 } = require("uuid");
 const axios = require("axios");
 const { getAgentHandler } = require("../agents");
 
+// ============================================================
+// Customer field validators (match payinController for consistency)
+// ============================================================
+const isValidIndianMobile = (m) => {
+  if (!m) return false;
+  const s = String(m).replace(/\D/g, '');
+  if (s.length !== 10) return false;
+  if (!/^[6-9]/.test(s)) return false;
+  if (/^(\d)\1{9}$/.test(s)) return false;
+  return true;
+};
+
+const isValidEmail = (e) => {
+  if (!e) return false;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return false;
+  const blocked = ['example.com', 'example.org', 'example.net', 'test.com', 'localhost'];
+  const domain = e.split('@')[1].toLowerCase();
+  return !blocked.includes(domain);
+};
+
+const isValidName = (n) => {
+  if (!n) return false;
+  const s = String(n).trim();
+  return s.length >= 2 && s.length <= 100;
+};
+
+const validateCustomer = ({ name, mobile, email }) => {
+  const errors = [];
+  if (!isValidName(name)) {
+    errors.push(name ? 'name must be 2-100 characters' : 'name is required');
+  }
+  if (!isValidIndianMobile(mobile)) {
+    errors.push(mobile
+      ? 'mobile must be a valid 10-digit Indian number (starts with 6-9, not all same digit)'
+      : 'mobile is required');
+  }
+  if (!isValidEmail(email)) {
+    errors.push(email
+      ? 'email must be a valid email address (no example.com / test domains)'
+      : 'email is required');
+  }
+  return errors;
+};
+
 const createPayment = async (req, res) => {
   try {
     const {
       amount,
       order_id,
       webhook_url,
+      // Accept both naming styles for backward compatibility:
       customer_name,
       customer_mobile,
       customer_email,
+      name,
+      mobile,
+      email,
     } = req.body;
     const merchant_id = req.user.merchant?.id;
+
+    // Normalize: prefer the snake_case (older callers) but fall through to short names
+    const finalName = customer_name || name;
+    const finalMobile = customer_mobile || mobile;
+    const finalEmail = customer_email || email;
 
     if (!merchant_id)
       return res
@@ -23,6 +76,20 @@ const createPayment = async (req, res) => {
       return res
         .status(400)
         .json({ success: false, message: "Amount and order_id required" });
+
+    // -------- Strict customer validation --------
+    const customerErrors = validateCustomer({
+      name: finalName,
+      mobile: finalMobile,
+      email: finalEmail,
+    });
+    if (customerErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid customer details',
+        errors: customerErrors,
+      });
+    }
 
     const merchantResult = await db.query(
       "SELECT * FROM merchants WHERE id=$1 AND is_active=TRUE",
@@ -80,9 +147,9 @@ const createPayment = async (req, res) => {
         order_id,
         reference_id,
         customer: {
-          name: customer_name || "Customer",
-          mobile: customer_mobile || "9999999999",
-          email: customer_email || "customer@example.com",
+          name: String(finalName).trim(),
+          mobile: String(finalMobile).replace(/\D/g, ''),
+          email: String(finalEmail).trim().toLowerCase(),
         },
       });
       bankDetails = result;
