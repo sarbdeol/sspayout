@@ -1,6 +1,60 @@
 import React, { useState, useEffect } from 'react';
-import { Copy, Check, ChevronRight, Code, Webhook, Search, FileText } from 'lucide-react';
 import API from '../../services/api';
+
+// ============================================================
+// Inline SVG icons (no dependencies)
+// ============================================================
+
+const IconCopy = ({ size = 16, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+  </svg>
+);
+
+const IconCheck = ({ size = 16, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <polyline points="20 6 9 17 4 12"></polyline>
+  </svg>
+);
+
+const IconChevronRight = ({ size = 16, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <polyline points="9 18 15 12 9 6"></polyline>
+  </svg>
+);
+
+const IconCode = ({ size = 16, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <polyline points="16 18 22 12 16 6"></polyline>
+    <polyline points="8 6 2 12 8 18"></polyline>
+  </svg>
+);
+
+const IconWebhook = ({ size = 16, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M18 16.98h-5.99c-1.1 0-1.95.94-2.48 1.9A4 4 0 0 1 2 17a3.98 3.98 0 0 1 2.65-3.77"></path>
+    <path d="m12 8-2.65 4.5a4 4 0 1 1-3.7-1.95"></path>
+    <path d="M19.99 12.06A4 4 0 1 1 16 16h-2.5"></path>
+  </svg>
+);
+
+const IconSearch = ({ size = 16, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <circle cx="11" cy="11" r="8"></circle>
+    <path d="m21 21-4.3-4.3"></path>
+  </svg>
+);
+
+const IconFileText = ({ size = 16, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+    <polyline points="14 2 14 8 20 8"></polyline>
+    <line x1="16" y1="13" x2="8" y2="13"></line>
+    <line x1="16" y1="17" x2="8" y2="17"></line>
+    <polyline points="10 9 9 9 8 9"></polyline>
+  </svg>
+);
 
 // ============================================================
 // API Documentation Page (Merchant Dashboard)
@@ -12,11 +66,16 @@ const ApiDocs = () => {
   const [copiedField, setCopiedField] = useState(null);
 
   useEffect(() => {
-    // Fetch merchant's own api_key from profile endpoint
     const loadKey = async () => {
       try {
-        const res = await api.get('/auth/profile');
-        setApiKey(res.data?.data?.merchant?.api_key || res.data?.merchant?.api_key || '');
+        const res = await API.get('/auth/profile');
+        setApiKey(
+          res.data?.data?.merchant?.api_key ||
+          res.data?.merchant?.api_key ||
+          res.data?.data?.api_key ||
+          res.data?.api_key ||
+          ''
+        );
       } catch (e) {
         console.error('Failed to load api_key', e);
       }
@@ -32,20 +91,18 @@ const ApiDocs = () => {
 
   const KEY_PLACEHOLDER = apiKey || 'YOUR_MERCHANT_API_KEY';
 
-  // -------- Sidebar navigation --------
   const sections = [
-    { id: 'overview', label: 'Overview', icon: FileText },
-    { id: 'auth', label: 'Authentication', icon: Code },
-    { id: 'create', label: 'Create Payment', icon: Code },
-    { id: 'status', label: 'Check Status', icon: Search },
-    { id: 'utr', label: 'Submit UTR', icon: Code },
-    { id: 'webhook', label: 'Webhook', icon: Webhook },
-    { id: 'errors', label: 'Error Codes', icon: ChevronRight },
+    { id: 'overview', label: 'Overview', icon: IconFileText },
+    { id: 'auth', label: 'Authentication', icon: IconCode },
+    { id: 'create', label: 'Create Payment', icon: IconCode },
+    { id: 'status', label: 'Check Status', icon: IconSearch },
+    { id: 'utr', label: 'Submit UTR', icon: IconCode },
+    { id: 'webhook', label: 'Webhook', icon: IconWebhook },
+    { id: 'errors', label: 'Error Codes', icon: IconChevronRight },
   ];
 
   return (
     <div className="flex min-h-screen bg-gray-50">
-      {/* Inner sidebar — sub-nav for docs */}
       <aside className="w-60 border-r border-gray-200 bg-white p-4 sticky top-0 h-screen overflow-y-auto">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">API Reference</h2>
         <nav className="space-y-1">
@@ -70,7 +127,6 @@ const ApiDocs = () => {
           })}
         </nav>
 
-        {/* API key card */}
         <div className="mt-6 p-3 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg border border-blue-100">
           <div className="text-xs font-semibold text-gray-700 mb-2">Your API Key</div>
           <div className="flex items-center gap-2">
@@ -83,13 +139,12 @@ const ApiDocs = () => {
               title="Copy API key"
               disabled={!apiKey}
             >
-              {copiedField === 'sidebar-key' ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
+              {copiedField === 'sidebar-key' ? <IconCheck size={14} className="text-green-600" /> : <IconCopy size={14} />}
             </button>
           </div>
         </div>
       </aside>
 
-      {/* Main content */}
       <main className="flex-1 p-8 max-w-5xl">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">PayGateway API</h1>
@@ -98,12 +153,11 @@ const ApiDocs = () => {
             <span className="text-gray-400">Base URL:</span>
             <span>https://ss.sspay.online/api</span>
             <button onClick={() => copy('https://ss.sspay.online/api', 'base-url')} className="ml-2 hover:text-gray-300">
-              {copiedField === 'base-url' ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+              {copiedField === 'base-url' ? <IconCheck size={14} className="text-green-400" /> : <IconCopy size={14} />}
             </button>
           </div>
         </div>
 
-        {/* OVERVIEW */}
         <Section id="section-overview" title="Overview">
           <p className="text-gray-700">
             PayGateway provides a UPI-first payment API for accepting payments in INR. The flow is:
@@ -117,7 +171,6 @@ const ApiDocs = () => {
           </ol>
         </Section>
 
-        {/* AUTH */}
         <Section id="section-auth" title="Authentication">
           <p className="text-gray-700">
             All requests must include your <InlineCode>api-key</InlineCode> header. Keep this key secret — never expose it in client-side code.
@@ -131,10 +184,8 @@ const ApiDocs = () => {
           />
         </Section>
 
-        {/* CREATE PAYMENT */}
         <Section id="section-create" title="Create Payment">
           <EndpointBadge method="POST" path="/api/payin" />
-
           <h4 className="font-semibold mt-4 mb-2 text-gray-900">Request Body</h4>
           <ParamTable
             rows={[
@@ -146,7 +197,6 @@ const ApiDocs = () => {
               { name: 'email', type: 'string', required: false, desc: 'Customer email (real domain — no example.com)' },
             ]}
           />
-
           <h4 className="font-semibold mt-6 mb-2 text-gray-900">cURL</h4>
           <CodeBlock
             language="bash"
@@ -164,7 +214,6 @@ const ApiDocs = () => {
             onCopy={(c) => copy(c, 'create-curl')}
             copied={copiedField === 'create-curl'}
           />
-
           <h4 className="font-semibold mt-6 mb-2 text-gray-900">Success Response</h4>
           <CodeBlock
             language="json"
@@ -192,22 +241,18 @@ const ApiDocs = () => {
           </Note>
         </Section>
 
-        {/* STATUS CHECK — NEW */}
         <Section id="section-status" title="Check Payment Status" badge="NEW">
           <EndpointBadge method="GET" path="/api/payin/status/:transaction_id" />
-
           <p className="text-gray-700 mt-2">
             Poll this endpoint to check the current status of a payment. Useful when your webhook endpoint was down,
             or to reconcile a payment manually.
           </p>
-
           <h4 className="font-semibold mt-4 mb-2 text-gray-900">Path Parameter</h4>
           <ParamTable
             rows={[
               { name: 'transaction_id', type: 'string', required: true, desc: 'The transaction_id returned from Create Payment' },
             ]}
           />
-
           <h4 className="font-semibold mt-6 mb-2 text-gray-900">cURL</h4>
           <CodeBlock
             language="bash"
@@ -216,7 +261,6 @@ const ApiDocs = () => {
             onCopy={(c) => copy(c, 'status-curl')}
             copied={copiedField === 'status-curl'}
           />
-
           <h4 className="font-semibold mt-6 mb-2 text-gray-900">Success Response</h4>
           <CodeBlock
             language="json"
@@ -236,7 +280,6 @@ const ApiDocs = () => {
             onCopy={(c) => copy(c, 'status-resp')}
             copied={copiedField === 'status-resp'}
           />
-
           <h4 className="font-semibold mt-6 mb-2 text-gray-900">Status Values</h4>
           <ParamTable
             rows={[
@@ -249,7 +292,6 @@ const ApiDocs = () => {
             cols={['Status', 'Type', 'Meaning']}
             hideRequired
           />
-
           <Note>
             <strong>Self-healing:</strong> if the status check finds your payment confirmed at the provider but our
             DB still shows pending (i.e. webhook was missed), our system reconciles automatically and returns the
@@ -257,14 +299,12 @@ const ApiDocs = () => {
           </Note>
         </Section>
 
-        {/* SUBMIT UTR */}
         <Section id="section-utr" title="Submit UTR">
           <EndpointBadge method="POST" path="/api/payin/utr" />
           <p className="text-gray-700 mt-2">
             For bank-transfer flows where the customer has paid manually and you need to submit the UTR (Unique
             Transaction Reference) for verification. Not needed for UPI flows — those auto-confirm via webhook.
           </p>
-
           <h4 className="font-semibold mt-4 mb-2 text-gray-900">Request Body</h4>
           <ParamTable
             rows={[
@@ -272,7 +312,6 @@ const ApiDocs = () => {
               { name: 'utr', type: 'string', required: true, desc: 'UTR / RRN provided by customer' },
             ]}
           />
-
           <h4 className="font-semibold mt-6 mb-2 text-gray-900">cURL</h4>
           <CodeBlock
             language="bash"
@@ -288,13 +327,11 @@ const ApiDocs = () => {
           />
         </Section>
 
-        {/* WEBHOOK */}
         <Section id="section-webhook" title="Webhook Callback">
           <p className="text-gray-700">
             When a payment reaches a final state, we POST to your <InlineCode>webhook_url</InlineCode>. Your endpoint must respond
             with HTTP 200, otherwise we'll mark the delivery as failed.
           </p>
-
           <h4 className="font-semibold mt-4 mb-2 text-gray-900">Webhook Payload</h4>
           <CodeBlock
             language="json"
@@ -308,7 +345,6 @@ const ApiDocs = () => {
             onCopy={(c) => copy(c, 'webhook-body')}
             copied={copiedField === 'webhook-body'}
           />
-
           <h4 className="font-semibold mt-6 mb-2 text-gray-900">Status Values in Webhook</h4>
           <ParamTable
             rows={[
@@ -318,14 +354,12 @@ const ApiDocs = () => {
             cols={['Status', 'Type', 'Meaning']}
             hideRequired
           />
-
           <Note variant="warning">
             <strong>Always verify on your end</strong> by calling the status check endpoint before fulfilling an order.
             Webhooks can be delayed, retried, or spoofed.
           </Note>
         </Section>
 
-        {/* ERRORS */}
         <Section id="section-errors" title="Error Codes">
           <ParamTable
             rows={[
@@ -365,7 +399,6 @@ const Section = ({ id, title, badge, children }) => (
   </section>
 );
 
-// Renamed from `Code` to `InlineCode` to avoid clash with the lucide-react `Code` icon import.
 const InlineCode = ({ children }) => (
   <code className="px-1.5 py-0.5 bg-gray-100 text-gray-800 rounded text-sm font-mono">{children}</code>
 );
@@ -395,7 +428,7 @@ const CodeBlock = ({ code, language = 'bash', label, onCopy, copied }) => (
       onClick={() => onCopy(code)}
       className="absolute top-2 right-2 p-2 bg-gray-800 hover:bg-gray-700 rounded text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity"
     >
-      {copied ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+      {copied ? <IconCheck size={14} className="text-green-400" /> : <IconCopy size={14} />}
     </button>
   </div>
 );
