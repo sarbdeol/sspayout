@@ -1,5 +1,27 @@
 const axios = require('axios');
+const https = require('https');
+const tls = require('tls');
 const QRCode = require('qrcode');
+
+// ---------- HTTPS agent for MeroRecharge ----------
+//
+// MeroRecharge serves an incomplete TLS chain (missing the Let's Encrypt R13
+// intermediate cert). `openssl s_client` returns "Verify return code: 21
+// (unable to verify the first certificate)".
+//
+// Their cert IS valid — Let's Encrypt is a trusted CA — but they fail to
+// transmit the intermediate cert, so default Node.js validation breaks.
+//
+// Fix: explicitly pass Node's bundled root CA list to the HTTPS agent. This
+// keeps full validation enabled (rejectUnauthorized: true) but uses Node's
+// known-good Mozilla CA bundle, which contains the ISRG roots needed for
+// Let's Encrypt chain reconstruction via AIA extension.
+
+const merorechargeHttpsAgent = new https.Agent({
+  rejectUnauthorized: true,
+  ca: tls.rootCertificates,
+  keepAlive: true,
+});
 
 // ---------- Standard agent interface ----------
 
@@ -39,6 +61,7 @@ const createPayment = async (agent, { amount, order_id, reference_id, customer }
       'Accept': 'application/json',
     },
     timeout: 15000,
+    httpsAgent: merorechargeHttpsAgent,
   });
 
   const data = response.data;
@@ -51,7 +74,7 @@ const createPayment = async (agent, { amount, order_id, reference_id, customer }
   const result = data.result || {};
   const upiIntentUrl = result.upi_intent_url;
   const paymentUrl = result.payment_url;
-  const merchantOrderId = result.orderId; // their order id, e.g. "1234561705047510"
+  const merchantOrderId = result.orderId;
 
   // Generate QR from UPI deeplink (their primary output)
   let qr_code = null;
@@ -68,11 +91,9 @@ const createPayment = async (agent, { amount, order_id, reference_id, customer }
     bank_name: 'UPI Payment',
     account_number: null,
     ifsc: null,
-    upi_id: upiIntentUrl || paymentUrl || null, // tap-to-pay deeplink
+    upi_id: upiIntentUrl || paymentUrl || null,
     qr_code,
     account_holder_name: null,
-    // Store MeroRecharge's orderId as reference_id so webhook lookups find it.
-    // MeroRecharge will send their orderId back in the webhook.
     reference_id: merchantOrderId || reference_id,
   };
 };
@@ -88,23 +109,16 @@ const submitProof = async (agent, { reference_id, utr }) => {
  * Their webhook payload isn't fully documented, but based on their status check
  * response shape, the webhook likely contains similar fields. We try a few
  * common field names defensively.
- *
- * Expected fields: status, orderId / order_id, utr, amount, txnStatus
  */
 const parseWebhook = (body) => {
-  const result = body.result || body; // some providers wrap, some don't
+  const result = body.result || body;
   return {
-    // Match by orderId (MeroRecharge's id, which we stored as reference_id)
     reference_id: result.orderId || result.order_id || body.orderId || body.order_id || null,
     status: result.txnStatus || result.status || body.status || null,
     utr: result.utr || body.utr || null,
   };
 };
 
-// MeroRecharge uses these in their status check response:
-//   txnStatus: "COMPLETED"
-//   status: "SUCCESS"
-// We accept both since the webhook format isn't fully documented.
 const isConfirmed = (status) => {
   if (!status) return false;
   const s = String(status).toUpperCase();
@@ -119,23 +133,11 @@ const isFailed = (status) => {
 
 // ---------- Status check (form-encoded) ----------
 
-/**
- * Live status check via MeroRecharge's check-order-status API.
- * Used by getPayinStatus when DB shows non-terminal state.
- *
- * Returns the `result` object: { txnStatus, status, orderId, amount, date, utr }
- * Returns null on failure.
- */
 const checkStatus = async (agent, { merchant_order_id, reference_id }) => {
   const userToken = agent.api_key;
-
-  // Their endpoint is /check-order-status. Replace /create-order in api_endpoint.
   const statusEndpoint = agent.api_endpoint.replace(/\/create-order\/?$/, '/check-order-status');
-
-  // Use their orderId (we stored it as reference_id), fall back to merchant_order_id.
   const orderId = reference_id || merchant_order_id;
 
-  // They want application/x-www-form-urlencoded
   const params = new URLSearchParams();
   params.append('user_token', userToken);
   params.append('order_id', orderId);
@@ -143,16 +145,15 @@ const checkStatus = async (agent, { merchant_order_id, reference_id }) => {
   const response = await axios.post(statusEndpoint, params.toString(), {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     timeout: 10000,
+    httpsAgent: merorechargeHttpsAgent,
   });
 
   const data = response.data;
 
-  // Their status check uses status="COMPLETED" (string) on success, status="ERROR" on failure
   if (!data || String(data.status).toUpperCase() === 'ERROR') {
     return null;
   }
 
-  // Return result object so getPayinStatus can read .status / .utr / .amount
   return data.result || data;
 };
 
