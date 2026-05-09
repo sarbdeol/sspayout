@@ -109,18 +109,18 @@ const ApiDocs = () => {
             PayGateway provides a UPI-first payment API for accepting payments in INR. The flow is:
           </p>
           <ol className="list-decimal list-inside space-y-2 text-gray-700 mt-3">
-            <li>Call <Code>POST /api/payin</Code> to create a payment — you'll receive UPI / bank details and a transaction_id.</li>
+            <li>Call <InlineCode>POST /api/payin</InlineCode> to create a payment — you'll receive UPI / bank details and a transaction_id.</li>
             <li>Display the QR code or UPI link to your customer.</li>
             <li>Customer pays from their UPI app or bank.</li>
-            <li>We POST a confirmation to your <Code>webhook_url</Code> when payment completes.</li>
-            <li>If the webhook is missed, you can poll <Code>GET /api/payin/status/:transaction_id</Code> to reconcile.</li>
+            <li>We POST a confirmation to your <InlineCode>webhook_url</InlineCode> when payment completes.</li>
+            <li>If the webhook is missed, you can poll <InlineCode>GET /api/payin/status/:transaction_id</InlineCode> to reconcile.</li>
           </ol>
         </Section>
 
         {/* AUTH */}
         <Section id="section-auth" title="Authentication">
           <p className="text-gray-700">
-            All requests must include your <Code>api-key</Code> header. Keep this key secret — never expose it in client-side code.
+            All requests must include your <InlineCode>api-key</InlineCode> header. Keep this key secret — never expose it in client-side code.
           </p>
           <CodeBlock
             label="Header"
@@ -187,7 +187,7 @@ const ApiDocs = () => {
             copied={copiedField === 'create-resp'}
           />
           <Note>
-            <strong>Save the <Code>transaction_id</Code></strong> — you'll need it to check status or reconcile later.
+            <strong>Save the <InlineCode>transaction_id</InlineCode></strong> — you'll need it to check status or reconcile later.
             Payments expire 30 minutes after creation.
           </Note>
         </Section>
@@ -291,7 +291,7 @@ const ApiDocs = () => {
         {/* WEBHOOK */}
         <Section id="section-webhook" title="Webhook Callback">
           <p className="text-gray-700">
-            When a payment reaches a final state, we POST to your <Code>webhook_url</Code>. Your endpoint must respond
+            When a payment reaches a final state, we POST to your <InlineCode>webhook_url</InlineCode>. Your endpoint must respond
             with HTTP 200, otherwise we'll mark the delivery as failed.
           </p>
 
@@ -365,7 +365,8 @@ const Section = ({ id, title, badge, children }) => (
   </section>
 );
 
-const Code = ({ children }) => (
+// Renamed from `Code` to `InlineCode` to avoid clash with the lucide-react `Code` icon import.
+const InlineCode = ({ children }) => (
   <code className="px-1.5 py-0.5 bg-gray-100 text-gray-800 rounded text-sm font-mono">{children}</code>
 );
 
