@@ -20,6 +20,47 @@ const buildSignature = (fields, apiSecret) => {
   return crypto.createHmac('sha256', apiSecret).update(canonical).digest('hex');
 };
 
+// ---------- Helpers for safe customer defaults ----------
+
+/**
+ * Validate Indian mobile: 10 digits, starts with 6-9, not all-same digit.
+ * Maxpe rejects 9999999999 and similar repeating sequences.
+ */
+const isValidIndianMobile = (m) => {
+  if (!m) return false;
+  const s = String(m).replace(/\D/g, ''); // strip non-digits
+  if (s.length !== 10) return false;
+  if (!/^[6-9]/.test(s)) return false;
+  if (/^(\d)\1{9}$/.test(s)) return false; // all same digit
+  return true;
+};
+
+/**
+ * Basic email format check + reject reserved/test domains that strict
+ * validators (like Maxpe) bounce.
+ */
+const isValidEmail = (e) => {
+  if (!e) return false;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return false;
+  const blocked = ['example.com', 'example.org', 'example.net', 'test.com', 'localhost'];
+  const domain = e.split('@')[1].toLowerCase();
+  return !blocked.includes(domain);
+};
+
+/**
+ * Generate a deterministic, valid-looking mobile from order_id.
+ * Starts with 7, then 9 digits derived from a hash of order_id.
+ * Used when the caller didn't pass a valid mobile.
+ */
+const fallbackMobile = (order_id) => {
+  const hash = crypto.createHash('sha256').update(String(order_id)).digest('hex');
+  const digits = BigInt('0x' + hash.slice(0, 12)).toString().slice(0, 9).padStart(9, '0');
+  return '7' + digits;
+};
+
+const fallbackEmail = (order_id) =>
+  `customer+${String(order_id).toLowerCase().replace(/[^a-z0-9]/g, '')}@sspay.online`;
+
 // ---------- Standard agent interface ----------
 
 const createPayment = async (agent, { amount, order_id, reference_id, customer }) => {
@@ -33,10 +74,30 @@ const createPayment = async (agent, { amount, order_id, reference_id, customer }
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const nonce = crypto.randomBytes(8).toString('hex');
 
+  // ---------- Build payload with validated customer fields ----------
+
+  const rawMobile = customer?.mobile;
+  const rawEmail = customer?.email;
+
+  const mobile = isValidIndianMobile(rawMobile)
+    ? String(rawMobile).replace(/\D/g, '')
+    : fallbackMobile(order_id);
+
+  const email = isValidEmail(rawEmail)
+    ? rawEmail
+    : fallbackEmail(order_id);
+
+  if (rawMobile && !isValidIndianMobile(rawMobile)) {
+    console.warn(`⚠️ HandyPay: invalid mobile "${rawMobile}" provided, using fallback ${mobile}`);
+  }
+  if (rawEmail && !isValidEmail(rawEmail)) {
+    console.warn(`⚠️ HandyPay: invalid email "${rawEmail}" provided, using fallback ${email}`);
+  }
+
   const payload = {
-    name: customer?.name || 'Customer',
-    mobile: customer?.mobile || '9999999999',
-    email: customer?.email || 'customer@example.com',
+    name: (customer?.name || 'Customer').trim(),
+    mobile,
+    email,
     amount: String(amount),
     merchant_order_id: order_id,
   };
@@ -54,7 +115,7 @@ const createPayment = async (agent, { amount, order_id, reference_id, customer }
 
   const signature = buildSignature(dataToSign, apiSecret);
 
-  console.log(`🔵 HandyPay: creating payment for order ${order_id} (nonce=${nonce})`);
+  console.log(`🔵 HandyPay: creating payment for order ${order_id} (nonce=${nonce}, mobile=${mobile}, email=${email})`);
 
   const response = await axios.post(agent.api_endpoint, payload, {
     headers: {
