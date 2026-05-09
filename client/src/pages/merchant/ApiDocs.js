@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Copy, Check, ChevronRight, Code, Webhook, Search, FileText } from 'lucide-react';
-import api from '../../utils/api'; // adjust path to your axios instance
+import API from '../../services/api';
 
 // ============================================================
 // API Documentation Page (Merchant Dashboard)
