@@ -28,7 +28,7 @@ const merchantNav = [
       { to: "/merchant/payments", icon: "⇄", label: "Transactions" },
       { to: "/merchant/ledger", icon: "▤", label: "Ledger" },
       { to: "/merchant/settlements", icon: "◎", label: "Settlements" },
-      { to: '/merchant/api-docs', label: 'API Docs', icon: FileText }
+      { to: "/merchant/api-docs", icon: "⌘", label: "API Docs" },
     ],
   },
 ];
