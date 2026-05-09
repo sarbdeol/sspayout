@@ -1,42 +1,48 @@
 const axios = require('axios');
 const https = require('https');
+const fs = require('fs');
 const tls = require('tls');
 const QRCode = require('qrcode');
 
-// ---------- HTTPS agent for MeroRecharge ----------
+// ============================================================
+// HTTPS agent for MeroRecharge
+// ============================================================
 //
-// MeroRecharge serves an incomplete TLS chain (missing the Let's Encrypt R13
-// intermediate cert). `openssl s_client` returns "Verify return code: 21
-// (unable to verify the first certificate)".
+// PROBLEM:
+// MeroRecharge serves an INCOMPLETE TLS chain at merorecharge.com — only
+// the leaf cert. The Let's Encrypt R13 intermediate is not transmitted.
+// Browsers and Postman cache intermediates and work around this; Node.js
+// does not, and rejects with "unable to verify the first certificate".
 //
-// Their cert IS valid — Let's Encrypt is a trusted CA — but they fail to
-// transmit the intermediate cert, so default Node.js validation breaks.
+// FIX:
+// Build a CA bundle that combines:
+//   1. Node's bundled root CAs (from Mozilla via tls.rootCertificates)
+//   2. The system CA bundle at /etc/ssl/certs/ca-certificates.crt
+//      (which we manually augmented with R13 intermediate)
 //
-// Fix: explicitly pass Node's bundled root CA list to the HTTPS agent. This
-// keeps full validation enabled (rejectUnauthorized: true) but uses Node's
-// known-good Mozilla CA bundle, which contains the ISRG roots needed for
-// Let's Encrypt chain reconstruction via AIA extension.
+// We load this explicitly in code rather than relying on
+// NODE_EXTRA_CA_CERTS, because that env var doesn't always propagate
+// through pm2 to child processes.
+
+let combinedCAs;
+try {
+  const systemCAs = fs.readFileSync('/etc/ssl/certs/ca-certificates.crt', 'utf8');
+  combinedCAs = [...tls.rootCertificates, systemCAs];
+  console.log(`✅ MeroRecharge: loaded ${tls.rootCertificates.length} bundled CAs + system bundle`);
+} catch (e) {
+  console.warn('⚠️ MeroRecharge: could not read system CAs, falling back to bundled only:', e.message);
+  combinedCAs = tls.rootCertificates;
+}
 
 const merorechargeHttpsAgent = new https.Agent({
   rejectUnauthorized: true,
-  ca: tls.rootCertificates,
+  ca: combinedCAs,
   keepAlive: true,
 });
 
-// ---------- Standard agent interface ----------
-
-/**
- * MeroRecharge — UPI payment provider.
- * Auth: `user_token` field in request body (no signature, no encryption).
- * Endpoints:
- *   POST https://merorecharge.com/api/create-order
- *   POST https://merorecharge.com/api/check-order-status
- *
- * Confirmation: webhook callback to the URL configured in MeroRecharge dashboard.
- * Status check: also available via /check-order-status as fallback.
- *
- * NOTE: We store MeroRecharge's "user_token" in the agent.api_key column.
- */
+// ============================================================
+// Standard agent interface
+// ============================================================
 
 const createPayment = async (agent, { amount, order_id, reference_id, customer }) => {
   const userToken = agent.api_key;
@@ -50,7 +56,7 @@ const createPayment = async (agent, { amount, order_id, reference_id, customer }
     amount: String(amount),
     customer_name: customer?.name || 'Customer',
     customer_mobile: customer?.mobile || '9999999999',
-    remark: order_id, // pass order_id as remark so it's visible in their dashboard
+    remark: order_id,
   };
 
   console.log(`🔵 MeroRecharge: creating order for ${order_id} (amount=${amount})`);
@@ -66,7 +72,6 @@ const createPayment = async (agent, { amount, order_id, reference_id, customer }
 
   const data = response.data;
 
-  // MeroRecharge returns status as boolean true on success, "false" string on error.
   if (!data || data.status !== true) {
     throw new Error(data?.message || 'MeroRecharge failed to create order');
   }
@@ -76,7 +81,6 @@ const createPayment = async (agent, { amount, order_id, reference_id, customer }
   const paymentUrl = result.payment_url;
   const merchantOrderId = result.orderId;
 
-  // Generate QR from UPI deeplink (their primary output)
   let qr_code = null;
   if (upiIntentUrl) {
     try {
@@ -99,17 +103,9 @@ const createPayment = async (agent, { amount, order_id, reference_id, customer }
 };
 
 const submitProof = async (agent, { reference_id, utr }) => {
-  // MeroRecharge is callback-only — they confirm via webhook to the configured URL.
   console.log('MeroRecharge: skipping proof submission, callback will confirm');
 };
 
-/**
- * Parse MeroRecharge's webhook callback.
- *
- * Their webhook payload isn't fully documented, but based on their status check
- * response shape, the webhook likely contains similar fields. We try a few
- * common field names defensively.
- */
 const parseWebhook = (body) => {
   const result = body.result || body;
   return {
@@ -130,8 +126,6 @@ const isFailed = (status) => {
   const s = String(status).toUpperCase();
   return ['FAILED', 'FAILURE', 'REJECTED', 'ERROR', 'EXPIRED', 'CANCELLED'].includes(s);
 };
-
-// ---------- Status check (form-encoded) ----------
 
 const checkStatus = async (agent, { merchant_order_id, reference_id }) => {
   const userToken = agent.api_key;
