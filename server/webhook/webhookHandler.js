@@ -253,6 +253,7 @@ const handleWebhook = async (req, res) => {
           const merchantResp = await require("axios").post(payment.webhook_url, {
             transactionId: possibleRef,
             status: "approved",
+            utr: utr || payment.utr || null,
             amount: payment.amount,
           }, { timeout: 10000 });
           console.log(`[${reqId}] ✅ Merchant webhook fired: ${payment.webhook_url} (status: ${merchantResp.status})`);
